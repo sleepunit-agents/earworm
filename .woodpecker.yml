@@ -32,8 +32,8 @@ steps:
       status: [success, failure]
     settings:
       webhook_id:
-        from_secret: discord_webhook_id
+        from_secret: discord_ci_webhook_id
       webhook_token:
-        from_secret: discord_webhook_token
+        from_secret: discord_ci_webhook_token
       message: "{{#success build.status}}**✅ Build succeeded** — {{repo.name}} #{{build.number}}{{else}}**❌ Build failed** — {{repo.name}} #{{build.number}}{{/success}}\nBranch: `{{build.branch}}` | Commit: `{{truncate build.commit 7}}`\n{{build.link}}"
     depends_on: [lint, test]
