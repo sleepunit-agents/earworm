@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from earworm.pipeline import analyze_layer1, analyze_layer2
+from earworm.pipeline import analyze_layer1, analyze_layer2, analyze_layer3
 
 
 def main() -> None:
@@ -25,9 +25,9 @@ def main() -> None:
     analyze.add_argument(
         "--layer",
         type=int,
-        choices=[1, 2],
+        choices=[1, 2, 3],
         default=1,
-        help="Analysis layer: 1=signal features, 2=structural comprehension (default: 1)",
+        help="Analysis layer: 1=signal, 2=structural, 3=quality (default: 1)",
     )
 
     args = parser.parse_args()
@@ -52,10 +52,13 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
 
     if layer == 1:
         result = analyze_layer1(path)
-    else:
-        # Layer 2 runs Layer 1 first if needed for beat data
+    elif layer == 2:
         layer1 = analyze_layer1(path)
         result = analyze_layer2(path, layer1=layer1)
+    else:
+        layer1 = analyze_layer1(path)
+        layer2 = analyze_layer2(path, layer1=layer1)
+        result = analyze_layer3(path, layer1=layer1, layer2=layer2)
 
     elapsed = time.time() - start
     print(f"Done in {elapsed:.1f}s", file=sys.stderr)
@@ -65,8 +68,10 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
     else:
         if layer == 1:
             output = _format_human_l1(result)
-        else:
+        elif layer == 2:
             output = _format_human_l2(result)
+        else:
+            output = _format_human_l3(result)
 
     if args.output:
         args.output.write_text(output)
@@ -182,6 +187,61 @@ def _format_human_l2(result) -> str:
     lines.append(f"    Regularity:     {ph.regularity:.0%}")
     if ph.irregular_phrases:
         lines.append(f"    Irregular:      phrases {ph.irregular_phrases}")
+    lines.append("")
+
+    lines.append(f"{'=' * 60}")
+    return "\n".join(lines)
+
+
+def _format_human_l3(result) -> str:
+    """Format Layer 3 analysis results for human reading."""
+    lines = []
+    lines.append(f"{'=' * 60}")
+    lines.append("  Earworm Layer 3 Analysis — Quality Assessment")
+    lines.append(f"{'=' * 60}")
+    lines.append(f"  File:     {result.file_path}")
+    lines.append(f"  Duration: {result.duration_seconds:.1f}s")
+    lines.append("")
+
+    # Technical
+    tech = result.technical
+    lines.append("  Technical Quality")
+    lines.append(f"    Clipping:       {tech.clipping_ratio:.4%} ({tech.clipping_regions} regions)")
+    lines.append(f"    DC offset:      {tech.dc_offset:.6f} ({'WARNING' if tech.has_dc_offset else 'OK'})")
+    lines.append(f"    Noise floor:    {tech.noise_floor_db:.1f} dB")
+    lines.append(f"    Freq balance:   {tech.frequency_balance_score:.0%}")
+    lines.append("")
+
+    # Mix
+    mix = result.mix
+    lines.append("  Mix Quality")
+    lines.append(f"    Low (<200Hz):   {mix.low_ratio:.1%}")
+    lines.append(f"    Mid (200-4k):   {mix.mid_ratio:.1%}")
+    lines.append(f"    High (>4kHz):   {mix.high_ratio:.1%}")
+    lines.append(f"    Balance:        {mix.spectral_balance_score:.0%}")
+    lines.append(f"    Stereo width:   {mix.stereo_width_score:.0%}")
+    lines.append(f"    Low clarity:    {mix.low_end_clarity:.0%}")
+    lines.append(f"    High clarity:   {mix.high_frequency_clarity:.0%}")
+    lines.append("")
+
+    # Mastering
+    mast = result.mastering
+    lines.append("  Mastering Quality")
+    lines.append(f"    LUFS:           {mast.lufs_integrated:.1f} (target: -14, deviation: {mast.lufs_deviation_from_target:+.1f})")
+    lines.append(f"    Dynamic range:  {mast.dynamic_range_score:.0%}")
+    lines.append(f"    Crest factor:   {mast.crest_factor_db:.1f} dB")
+    lines.append(f"    Consistency:    {mast.loudness_consistency:.0%}")
+    lines.append(f"    Limiter:        {mast.limiter_artifact_score:.0%} artifacts")
+    lines.append("")
+
+    # Composition
+    comp = result.composition
+    lines.append("  Composition Quality")
+    lines.append(f"    Harm. vocab:    {comp.harmonic_vocabulary} chord classes")
+    lines.append(f"    Chord changes:  {comp.chord_change_rate:.1f}/s")
+    lines.append(f"    Rhythmic var:   {comp.rhythmic_variation:.0%}")
+    lines.append(f"    Melodic range:  {comp.melodic_range_semitones:.1f} semitones")
+    lines.append(f"    Struct variety: {comp.structural_variety:.0%}")
     lines.append("")
 
     lines.append(f"{'=' * 60}")
