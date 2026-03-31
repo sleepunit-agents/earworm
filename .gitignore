@@ -4,4 +4,5 @@ __pycache__/
 *.pyc
 
 # Calibration corpus data (generated at runtime, may contain audio paths)
-calibration/
+# Only ignore the top-level corpus directory, not the earworm/calibration/ package
+/calibration/

@@ -8,5 +8,6 @@ where perception diverges from consensus.
 from earworm.calibration.corpus import Corpus
 from earworm.calibration.runner import CalibrationRunner
 from earworm.calibration.alignment import AlignmentChecker
+from earworm.calibration.journal import JournalManager
 
-__all__ = ["Corpus", "CalibrationRunner", "AlignmentChecker"]
+__all__ = ["Corpus", "CalibrationRunner", "AlignmentChecker", "JournalManager"]

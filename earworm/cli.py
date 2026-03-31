@@ -92,6 +92,61 @@ def main() -> None:
     )
     cal_report.add_argument("--json", action="store_true", help="Output raw JSON")
 
+    # journal subcommands
+    cal_journal = cal_sub.add_parser("journal", help="View or manage the taste journal")
+    journal_sub = cal_journal.add_subparsers(dest="journal_command")
+
+    journal_show = journal_sub.add_parser("show", help="Show journal summary")
+    journal_show.add_argument(
+        "--corpus-dir", type=Path, help="Corpus directory (default: ./calibration)"
+    )
+    journal_show.add_argument("--json", action="store_true", help="Output raw JSON")
+
+    journal_observe = journal_sub.add_parser(
+        "observe", help="Record an observation about a track"
+    )
+    journal_observe.add_argument("track_id", help="Track ID to observe")
+    journal_observe.add_argument("--noticed", required=True, help="What you noticed")
+    journal_observe.add_argument("--stood-out", required=True, help="What stood out")
+    journal_observe.add_argument("--missed", default="", help="What you missed (if anything)")
+    journal_observe.add_argument("--reaction", default="", help="Raw gut reaction")
+    journal_observe.add_argument(
+        "--corpus-dir", type=Path, help="Corpus directory (default: ./calibration)"
+    )
+
+    journal_pattern = journal_sub.add_parser(
+        "pattern", help="Record or update a taste pattern"
+    )
+    journal_pattern.add_argument("name", help="Pattern name")
+    journal_pattern.add_argument("--description", required=True, help="Pattern description")
+    journal_pattern.add_argument(
+        "--tracks", nargs="*", default=[], help="Supporting track IDs"
+    )
+    journal_pattern.add_argument(
+        "--confidence", type=float, default=0.5, help="Pattern confidence (0-1)"
+    )
+    journal_pattern.add_argument(
+        "--corpus-dir", type=Path, help="Corpus directory (default: ./calibration)"
+    )
+
+    journal_diverge = journal_sub.add_parser(
+        "diverge", help="Classify a divergence"
+    )
+    journal_diverge.add_argument("track_id", help="Track ID")
+    journal_diverge.add_argument("dimension", help="Alignment dimension")
+    journal_diverge.add_argument("--pipeline", required=True, help="What the pipeline perceived")
+    journal_diverge.add_argument("--human", required=True, help="Human consensus")
+    journal_diverge.add_argument(
+        "--classify",
+        required=True,
+        choices=["gap", "taste", "unclear"],
+        help="Classification: gap (pipeline limitation), taste (genuine difference), unclear",
+    )
+    journal_diverge.add_argument("--reasoning", default="", help="Why this classification")
+    journal_diverge.add_argument(
+        "--corpus-dir", type=Path, help="Corpus directory (default: ./calibration)"
+    )
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -409,7 +464,7 @@ def _cmd_calibrate(args: argparse.Namespace) -> None:
     corpus = Corpus(corpus_dir=args.corpus_dir) if hasattr(args, "corpus_dir") and args.corpus_dir else Corpus()
 
     if args.cal_command is None:
-        print("Usage: earworm calibrate {init,list,add,run,check,report}", file=sys.stderr)
+        print("Usage: earworm calibrate {init,list,add,run,check,report,journal}", file=sys.stderr)
         sys.exit(1)
 
     if args.cal_command == "init":
@@ -552,6 +607,80 @@ def _cmd_calibrate(args: argparse.Namespace) -> None:
                 for d in report.notable_divergences:
                     print(f"    → {d}")
             print(f"{'=' * 60}")
+
+    elif args.cal_command == "journal":
+        _cmd_journal(args)
+
+
+def _cmd_journal(args: argparse.Namespace) -> None:
+    from earworm.calibration.journal import JournalManager
+
+    corpus_dir = args.corpus_dir if hasattr(args, "corpus_dir") and args.corpus_dir else None
+    if corpus_dir:
+        journal_path = corpus_dir / "journal.json"
+    else:
+        journal_path = None
+
+    mgr = JournalManager(journal_path=journal_path)
+
+    if args.journal_command is None:
+        print("Usage: earworm calibrate journal {show,observe,pattern,diverge}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.journal_command == "show":
+        if args.json:
+            print(mgr.journal.model_dump_json(indent=2))
+        else:
+            summary = mgr.summary()
+            print(f"{'=' * 60}")
+            print("  Earworm Taste Journal")
+            print(f"{'=' * 60}")
+            print(f"  Observations: {summary['total_observations']} across {summary['tracks_observed']} tracks")
+            print(f"  Patterns:     {summary['patterns_identified']} identified")
+            print(f"  Divergences:  {summary['total_divergences']} total")
+            print(f"    Gaps:       {summary['gaps']}")
+            print(f"    Taste:      {summary['taste_differences']}")
+            print(f"    Unclear:    {summary['unclear']}")
+            print()
+            if summary["strongest_patterns"]:
+                print("  Strongest patterns:")
+                for p in summary["strongest_patterns"]:
+                    print(f"    • {p}")
+            print(f"{'=' * 60}")
+
+    elif args.journal_command == "observe":
+        obs = mgr.add_observation(
+            track_id=args.track_id,
+            what_i_noticed=args.noticed,
+            what_stood_out=args.stood_out,
+            what_i_missed=args.missed,
+            raw_reaction=args.reaction,
+        )
+        mgr.save()
+        print(f"Observation recorded for {obs.track_id}", file=sys.stderr)
+
+    elif args.journal_command == "pattern":
+        pattern = mgr.add_pattern(
+            name=args.name,
+            description=args.description,
+            supporting_tracks=args.tracks,
+            confidence=args.confidence,
+        )
+        mgr.save()
+        existing = "Updated" if len(pattern.supporting_tracks) > len(args.tracks) else "Recorded"
+        print(f"{existing} pattern: {pattern.name} (confidence: {pattern.confidence:.0%})", file=sys.stderr)
+
+    elif args.journal_command == "diverge":
+        div = mgr.classify_divergence(
+            track_id=args.track_id,
+            dimension=args.dimension,
+            pipeline_perception=args.pipeline,
+            human_consensus=args.human,
+            classification=args.classify,
+            reasoning=args.reasoning,
+        )
+        mgr.save()
+        print(f"Divergence classified: {div.dimension} [{div.classification}] for {div.track_id}", file=sys.stderr)
 
 
 if __name__ == "__main__":
