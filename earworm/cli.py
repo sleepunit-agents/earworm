@@ -51,6 +51,47 @@ def main() -> None:
         help="Override the LLM model name",
     )
 
+    # calibrate command group
+    calibrate = subparsers.add_parser("calibrate", help="Phase 3 calibration tools")
+    cal_sub = calibrate.add_subparsers(dest="cal_command")
+
+    cal_init = cal_sub.add_parser("init", help="Initialize corpus with seed tracks")
+    cal_init.add_argument(
+        "--corpus-dir", type=Path, help="Corpus directory (default: ./calibration)"
+    )
+
+    cal_list = cal_sub.add_parser("list", help="List tracks in the calibration corpus")
+    cal_list.add_argument(
+        "--corpus-dir", type=Path, help="Corpus directory (default: ./calibration)"
+    )
+
+    cal_add = cal_sub.add_parser("add", help="Add an audio file to a corpus track")
+    cal_add.add_argument("track_id", help="Track ID (e.g. talking-heads-born-under-punches)")
+    cal_add.add_argument("file", type=Path, help="Path to audio file")
+    cal_add.add_argument(
+        "--corpus-dir", type=Path, help="Corpus directory (default: ./calibration)"
+    )
+
+    cal_run = cal_sub.add_parser("run", help="Run pipeline on pending corpus tracks")
+    cal_run.add_argument(
+        "--corpus-dir", type=Path, help="Corpus directory (default: ./calibration)"
+    )
+    cal_run.add_argument("--voice", action="store_true", help="Include Voice interpretation")
+    cal_run.add_argument(
+        "--track", help="Run only this track ID (default: all pending)"
+    )
+
+    cal_check = cal_sub.add_parser("check", help="Run alignment checks on analyzed tracks")
+    cal_check.add_argument(
+        "--corpus-dir", type=Path, help="Corpus directory (default: ./calibration)"
+    )
+
+    cal_report = cal_sub.add_parser("report", help="Generate calibration report")
+    cal_report.add_argument(
+        "--corpus-dir", type=Path, help="Corpus directory (default: ./calibration)"
+    )
+    cal_report.add_argument("--json", action="store_true", help="Output raw JSON")
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -61,6 +102,8 @@ def main() -> None:
         _cmd_analyze(args)
     elif args.command == "voice":
         _cmd_voice(args)
+    elif args.command == "calibrate":
+        _cmd_calibrate(args)
 
 
 def _cmd_analyze(args: argparse.Namespace) -> None:
@@ -358,6 +401,157 @@ def _format_human_voice(result) -> str:
 
     lines.append(f"{'=' * 60}")
     return "\n".join(lines)
+
+
+def _cmd_calibrate(args: argparse.Namespace) -> None:
+    from earworm.calibration.corpus import Corpus
+
+    corpus = Corpus(corpus_dir=args.corpus_dir) if hasattr(args, "corpus_dir") and args.corpus_dir else Corpus()
+
+    if args.cal_command is None:
+        print("Usage: earworm calibrate {init,list,add,run,check,report}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.cal_command == "init":
+        from earworm.calibration.seeds import seed_corpus
+
+        seed_corpus(corpus)
+        tracks = corpus.list_tracks()
+        print(f"Corpus initialized with {len(tracks)} tracks:", file=sys.stderr)
+        for t in tracks:
+            descs = len(t.human_descriptions)
+            print(f"  {t.track_id}: {t.artist} — {t.title} ({descs} descriptions)", file=sys.stderr)
+
+    elif args.cal_command == "list":
+        tracks = corpus.list_tracks()
+        if not tracks:
+            print("Corpus is empty. Run 'earworm calibrate init' first.", file=sys.stderr)
+            sys.exit(1)
+
+        for t in tracks:
+            status = []
+            if t.audio_path:
+                status.append("audio")
+            if t.layer1:
+                status.append("L1")
+            if t.layer2:
+                status.append("L2")
+            if t.layer3:
+                status.append("L3")
+            if t.voice_result:
+                status.append("voice")
+            if t.alignments:
+                aligned = sum(1 for a in t.alignments if a.aligned)
+                status.append(f"aligned:{aligned}/{len(t.alignments)}")
+            if t.divergences:
+                status.append(f"div:{len(t.divergences)}")
+
+            status_str = ", ".join(status) if status else "pending"
+            descs = len(t.human_descriptions)
+            print(f"  {t.track_id}")
+            print(f"    {t.artist} — {t.title} ({t.year})")
+            print(f"    {descs} descriptions | {status_str}")
+
+    elif args.cal_command == "add":
+        path = args.file.resolve()
+        if not path.exists():
+            print(f"Error: file not found: {path}", file=sys.stderr)
+            sys.exit(1)
+
+        entry = corpus.get_track(args.track_id)
+        if entry is None:
+            print(f"Error: track not found: {args.track_id}", file=sys.stderr)
+            print("Available tracks:", file=sys.stderr)
+            for t in corpus.list_tracks():
+                print(f"  {t.track_id}", file=sys.stderr)
+            sys.exit(1)
+
+        entry.audio_path = str(path)
+        corpus.save()
+        print(f"Audio linked: {entry.track_id} → {path}", file=sys.stderr)
+
+    elif args.cal_command == "run":
+        from earworm.calibration.runner import CalibrationRunner
+
+        runner = CalibrationRunner(corpus)
+
+        if args.track:
+            entry = corpus.get_track(args.track)
+            if entry is None:
+                print(f"Error: track not found: {args.track}", file=sys.stderr)
+                sys.exit(1)
+            if not entry.audio_path:
+                print("Error: no audio file linked. Use 'earworm calibrate add'", file=sys.stderr)
+                sys.exit(1)
+
+            print(f"Running: {entry.artist} — {entry.title}", file=sys.stderr)
+            runner.run_track(entry, include_voice=args.voice)
+            corpus.save_result(entry)
+            corpus.save()
+            print("Done.", file=sys.stderr)
+        else:
+            results = runner.run_pending(include_voice=args.voice)
+            if results:
+                print(f"\nAnalyzed {len(results)} tracks.", file=sys.stderr)
+
+    elif args.cal_command == "check":
+        from earworm.calibration.alignment import AlignmentChecker
+
+        checker = AlignmentChecker()
+        pending = corpus.tracks_needing_alignment()
+
+        if not pending:
+            all_checked = [e for e in corpus.list_tracks() if e.alignments]
+            if all_checked:
+                print("All analyzed tracks already checked.", file=sys.stderr)
+            else:
+                print("No tracks ready for alignment check.", file=sys.stderr)
+                print("Tracks need both pipeline results and human descriptions.", file=sys.stderr)
+            return
+
+        for entry in pending:
+            print(f"\nChecking: {entry.artist} — {entry.title}", file=sys.stderr)
+            results = checker.check(entry)
+
+            for r in results:
+                mark = "✓" if r.aligned else "✗"
+                print(f"  {mark} {r.dimension.value}: pipeline='{r.pipeline_says}' | human='{r.human_says}'")
+
+            if entry.divergences:
+                print(f"\n  Divergences ({len(entry.divergences)}):")
+                for d in entry.divergences:
+                    print(f"    → {d}")
+
+        corpus.save()
+
+    elif args.cal_command == "report":
+        from earworm.calibration.alignment import AlignmentChecker
+
+        checker = AlignmentChecker()
+        entries = corpus.list_tracks()
+        report = checker.generate_report(entries)
+
+        if args.json:
+            print(report.model_dump_json(indent=2))
+        else:
+            print(f"{'=' * 60}")
+            print("  Earworm Calibration Report")
+            print(f"{'=' * 60}")
+            print(f"  Tracks: {report.total_tracks} total, "
+                  f"{report.analyzed_tracks} analyzed, "
+                  f"{report.checked_tracks} checked")
+            print(f"  Alignment rate: {report.alignment_rate:.0%}")
+            print()
+            if report.strongest_dimensions:
+                print(f"  Strongest: {', '.join(report.strongest_dimensions)}")
+            if report.weakest_dimensions:
+                print(f"  Weakest:   {', '.join(report.weakest_dimensions)}")
+            if report.notable_divergences:
+                print()
+                print("  Notable divergences:")
+                for d in report.notable_divergences:
+                    print(f"    → {d}")
+            print(f"{'=' * 60}")
 
 
 if __name__ == "__main__":

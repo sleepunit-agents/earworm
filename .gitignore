@@ -2,3 +2,6 @@ earworm.egg-info/
 __pycache__/
 .pytest_cache/
 *.pyc
+
+# Calibration corpus data (generated at runtime, may contain audio paths)
+calibration/
