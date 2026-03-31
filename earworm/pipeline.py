@@ -12,7 +12,11 @@ from earworm.features.loudness import extract_loudness
 from earworm.features.spectral import extract_spectral
 from earworm.features.stereo import extract_stereo
 from earworm.features.temporal import extract_temporal
-from earworm.models import Layer1Features, Layer2Features
+from earworm.models import Layer1Features, Layer2Features, Layer3Features
+from earworm.quality.composition import extract_composition
+from earworm.quality.mastering import extract_mastering
+from earworm.quality.mix import extract_mix
+from earworm.quality.technical import extract_technical
 from earworm.structure.energy import extract_energy_arc
 from earworm.structure.phrase import extract_phrase
 from earworm.structure.recurrence import extract_recurrence
@@ -106,4 +110,42 @@ def analyze_layer2(path: str | Path, layer1: Layer1Features | None = None) -> La
         recurrence=recurrence,
         energy_arc=energy_arc,
         phrase=phrase,
+    )
+
+
+def analyze_layer3(
+    path: str | Path,
+    layer1: Layer1Features | None = None,
+    layer2: Layer2Features | None = None,
+) -> Layer3Features:
+    """Run Layer 3 quality assessment on an audio file.
+
+    Builds on Layer 1 (loudness, stereo) and Layer 2 (segmentation labels).
+    Computes layers internally if not provided.
+    """
+    path = Path(path)
+    y_mono, y_original, sr = load_audio(path)
+    duration = len(y_mono) / sr
+
+    # Get Layer 1 if not provided (needed for mastering assessment)
+    if layer1 is None:
+        layer1 = analyze_layer1(path)
+
+    # Get segment labels from Layer 2 if available
+    segment_labels = None
+    if layer2 is not None:
+        segment_labels = layer2.segmentation.labels
+
+    technical = extract_technical(y_mono, sr)
+    mix = extract_mix(y_mono, sr, y_stereo=y_original)
+    mastering = extract_mastering(y_mono, sr, layer1.loudness)
+    composition = extract_composition(y_mono, sr, segment_labels=segment_labels)
+
+    return Layer3Features(
+        file_path=str(path),
+        duration_seconds=duration,
+        technical=technical,
+        mix=mix,
+        mastering=mastering,
+        composition=composition,
     )

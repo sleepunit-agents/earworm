@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from earworm.pipeline import analyze_layer1, analyze_layer2
+from earworm.pipeline import analyze_layer1, analyze_layer2, analyze_layer3
 
 
 def main() -> None:
@@ -25,9 +25,30 @@ def main() -> None:
     analyze.add_argument(
         "--layer",
         type=int,
-        choices=[1, 2],
+        choices=[1, 2, 3],
         default=1,
-        help="Analysis layer: 1=signal features, 2=structural comprehension (default: 1)",
+        help="Analysis layer: 1=signal, 2=structural, 3=quality (default: 1)",
+    )
+
+    # voice command
+    voice = subparsers.add_parser("voice", help="Interpret a track — natural language opinion")
+    voice.add_argument("file", type=Path, help="Path to audio file (WAV, FLAC, MP3, etc.)")
+    voice.add_argument("--json", action="store_true", help="Output raw JSON")
+    voice.add_argument("-o", "--output", type=Path, help="Write output to file")
+    voice.add_argument(
+        "--mode",
+        choices=["quick", "deep"],
+        default="quick",
+        help="Interpretation depth: quick (2-3 sentences) or deep (full walkthrough)",
+    )
+    voice.add_argument(
+        "--provider",
+        choices=["anthropic", "ollama"],
+        help="LLM provider (default: EARWORM_LLM_PROVIDER env or ollama)",
+    )
+    voice.add_argument(
+        "--model",
+        help="Override the LLM model name",
     )
 
     args = parser.parse_args()
@@ -38,6 +59,8 @@ def main() -> None:
 
     if args.command == "analyze":
         _cmd_analyze(args)
+    elif args.command == "voice":
+        _cmd_voice(args)
 
 
 def _cmd_analyze(args: argparse.Namespace) -> None:
@@ -52,10 +75,13 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
 
     if layer == 1:
         result = analyze_layer1(path)
-    else:
-        # Layer 2 runs Layer 1 first if needed for beat data
+    elif layer == 2:
         layer1 = analyze_layer1(path)
         result = analyze_layer2(path, layer1=layer1)
+    else:
+        layer1 = analyze_layer1(path)
+        layer2 = analyze_layer2(path, layer1=layer1)
+        result = analyze_layer3(path, layer1=layer1, layer2=layer2)
 
     elapsed = time.time() - start
     print(f"Done in {elapsed:.1f}s", file=sys.stderr)
@@ -65,8 +91,10 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
     else:
         if layer == 1:
             output = _format_human_l1(result)
-        else:
+        elif layer == 2:
             output = _format_human_l2(result)
+        else:
+            output = _format_human_l3(result)
 
     if args.output:
         args.output.write_text(output)
@@ -183,6 +211,150 @@ def _format_human_l2(result) -> str:
     if ph.irregular_phrases:
         lines.append(f"    Irregular:      phrases {ph.irregular_phrases}")
     lines.append("")
+
+    lines.append(f"{'=' * 60}")
+    return "\n".join(lines)
+
+
+def _format_human_l3(result) -> str:
+    """Format Layer 3 analysis results for human reading."""
+    lines = []
+    lines.append(f"{'=' * 60}")
+    lines.append("  Earworm Layer 3 Analysis — Quality Assessment")
+    lines.append(f"{'=' * 60}")
+    lines.append(f"  File:     {result.file_path}")
+    lines.append(f"  Duration: {result.duration_seconds:.1f}s")
+    lines.append("")
+
+    # Technical
+    tech = result.technical
+    lines.append("  Technical Quality")
+    lines.append(f"    Clipping:       {tech.clipping_ratio:.4%} ({tech.clipping_regions} regions)")
+    lines.append(f"    DC offset:      {tech.dc_offset:.6f} ({'WARNING' if tech.has_dc_offset else 'OK'})")
+    lines.append(f"    Noise floor:    {tech.noise_floor_db:.1f} dB")
+    lines.append(f"    Freq balance:   {tech.frequency_balance_score:.0%}")
+    lines.append("")
+
+    # Mix
+    mix = result.mix
+    lines.append("  Mix Quality")
+    lines.append(f"    Low (<200Hz):   {mix.low_ratio:.1%}")
+    lines.append(f"    Mid (200-4k):   {mix.mid_ratio:.1%}")
+    lines.append(f"    High (>4kHz):   {mix.high_ratio:.1%}")
+    lines.append(f"    Balance:        {mix.spectral_balance_score:.0%}")
+    lines.append(f"    Stereo width:   {mix.stereo_width_score:.0%}")
+    lines.append(f"    Low clarity:    {mix.low_end_clarity:.0%}")
+    lines.append(f"    High clarity:   {mix.high_frequency_clarity:.0%}")
+    lines.append("")
+
+    # Mastering
+    mast = result.mastering
+    lines.append("  Mastering Quality")
+    lines.append(f"    LUFS:           {mast.lufs_integrated:.1f} (target: -14, deviation: {mast.lufs_deviation_from_target:+.1f})")
+    lines.append(f"    Dynamic range:  {mast.dynamic_range_score:.0%}")
+    lines.append(f"    Crest factor:   {mast.crest_factor_db:.1f} dB")
+    lines.append(f"    Consistency:    {mast.loudness_consistency:.0%}")
+    lines.append(f"    Limiter:        {mast.limiter_artifact_score:.0%} artifacts")
+    lines.append("")
+
+    # Composition
+    comp = result.composition
+    lines.append("  Composition Quality")
+    lines.append(f"    Harm. vocab:    {comp.harmonic_vocabulary} chord classes")
+    lines.append(f"    Chord changes:  {comp.chord_change_rate:.1f}/s")
+    lines.append(f"    Rhythmic var:   {comp.rhythmic_variation:.0%}")
+    lines.append(f"    Melodic range:  {comp.melodic_range_semitones:.1f} semitones")
+    lines.append(f"    Struct variety: {comp.structural_variety:.0%}")
+    lines.append("")
+
+    lines.append(f"{'=' * 60}")
+    return "\n".join(lines)
+
+
+def _cmd_voice(args: argparse.Namespace) -> None:
+    from earworm.voice import interpret_from_file
+    from earworm.voice.provider import get_provider
+
+    path = args.file
+    if not path.exists():
+        print(f"Error: file not found: {path}", file=sys.stderr)
+        sys.exit(1)
+
+    # Build provider kwargs
+    provider_kwargs = {}
+    if args.model:
+        provider_kwargs["model"] = args.model
+
+    provider = get_provider(provider_name=args.provider, **provider_kwargs)
+
+    print(f"Interpreting ({args.mode}): {path}", file=sys.stderr)
+    print(f"Provider: {type(provider).__name__}", file=sys.stderr)
+    start = time.time()
+
+    result = interpret_from_file(path, mode=args.mode, provider=provider)
+
+    elapsed = time.time() - start
+    print(f"Done in {elapsed:.1f}s", file=sys.stderr)
+
+    if args.json:
+        output = result.model_dump_json(indent=2)
+    else:
+        output = _format_human_voice(result)
+
+    if args.output:
+        args.output.write_text(output)
+        print(f"Written to {args.output}", file=sys.stderr)
+    else:
+        print(output)
+
+
+def _format_human_voice(result) -> str:
+    """Format Voice interpretation for human reading."""
+    lines = []
+    lines.append(f"{'=' * 60}")
+    mode_label = "Quick Take" if result.mode == "quick" else "Deep Listen"
+    lines.append(f"  Earworm Voice — {mode_label}")
+    lines.append(f"{'=' * 60}")
+    lines.append(f"  File: {result.file_path}")
+    lines.append("")
+
+    lines.append("  Description")
+    for line in result.description.split("\n"):
+        lines.append(f"    {line}")
+    lines.append("")
+
+    lines.append("  Opinion")
+    for line in result.opinion.split("\n"):
+        lines.append(f"    {line}")
+    lines.append("")
+
+    if result.tags:
+        lines.append(f"  Tags: {', '.join(result.tags)}")
+        lines.append("")
+
+    if result.comparisons:
+        lines.append("  Reminds me of")
+        for comp in result.comparisons:
+            lines.append(f"    • {comp}")
+        lines.append("")
+
+    if result.highlights:
+        lines.append("  Highlights")
+        for h in result.highlights:
+            lines.append(f"    + {h}")
+        lines.append("")
+
+    if result.concerns:
+        lines.append("  Concerns")
+        for c in result.concerns:
+            lines.append(f"    - {c}")
+        lines.append("")
+
+    if result.section_notes:
+        lines.append("  Section Notes")
+        for line in result.section_notes.split("\n"):
+            lines.append(f"    {line}")
+        lines.append("")
 
     lines.append(f"{'=' * 60}")
     return "\n".join(lines)

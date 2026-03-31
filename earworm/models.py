@@ -155,3 +155,79 @@ class Layer2Features(BaseModel):
     recurrence: RecurrenceFeatures
     energy_arc: EnergyArcFeatures
     phrase: PhraseFeatures
+
+
+# --- Layer 3: Quality Assessment ---
+
+
+class TechnicalQuality(BaseModel):
+    """Technical audio quality — clipping, noise floor, frequency balance."""
+
+    clipping_ratio: float  # Fraction of samples at or near ±1.0 (0-1)
+    clipping_regions: int  # Number of continuous clipping regions
+    dc_offset: float  # Mean of signal (should be near 0)
+    noise_floor_db: float  # Estimated noise floor in dB
+    frequency_balance_score: float  # Spectral tilt vs flat reference (0-1, 1=balanced)
+    has_dc_offset: bool  # True if DC offset exceeds threshold
+
+
+class MixQuality(BaseModel):
+    """Mix quality — frequency distribution, stereo usage, clarity."""
+
+    low_ratio: float  # Energy fraction below 200Hz
+    mid_ratio: float  # Energy fraction 200Hz-4kHz
+    high_ratio: float  # Energy fraction above 4kHz
+    spectral_balance_score: float  # How evenly energy is distributed (0-1)
+    stereo_width_score: float  # Quality of stereo field usage (0-1)
+    low_end_clarity: float  # Low-frequency definition (0-1)
+    high_frequency_clarity: float  # High-frequency definition (0-1)
+
+
+class MasteringQuality(BaseModel):
+    """Mastering quality — loudness compliance, dynamics, limiter artifacts."""
+
+    lufs_integrated: float  # From Layer 1 (repeated for self-contained report)
+    lufs_deviation_from_target: float  # Distance from -14 LUFS streaming target
+    dynamic_range_score: float  # Quality of dynamic range (0-1)
+    loudness_consistency: float  # How consistent loudness is across sections (0-1)
+    limiter_artifact_score: float  # Detected limiter/clipping artifacts (0=none, 1=severe)
+    crest_factor_db: float  # From Layer 1 (repeated)
+
+
+class CompositionQuality(BaseModel):
+    """Compositional quality — harmonic vocabulary, rhythmic variety, structure."""
+
+    harmonic_vocabulary: int  # Number of distinct chord classes used
+    chord_change_rate: float  # Chord changes per second
+    rhythmic_variation: float  # Entropy of onset pattern (0-1, 1=highly varied)
+    melodic_range_semitones: float  # Range of dominant pitch contour
+    structural_variety: float  # How different sections are from each other (0-1)
+
+
+class Layer3Features(BaseModel):
+    """Complete Layer 3 quality assessment results."""
+
+    file_path: str
+    duration_seconds: float
+
+    technical: TechnicalQuality
+    mix: MixQuality
+    mastering: MasteringQuality
+    composition: CompositionQuality
+
+
+# --- Phase 2: Voice (Interpretation) ---
+
+
+class VoiceResult(BaseModel):
+    """Natural language interpretation of a track — Art's subjective response."""
+
+    file_path: str
+    mode: str  # "quick" or "deep"
+    description: str  # What the track sounds like
+    opinion: str  # Subjective assessment
+    tags: list[str]  # Genre, mood, texture, energy tags
+    comparisons: list[str]  # Artist/track/genre comparisons
+    highlights: list[str]  # What stands out positively
+    concerns: list[str]  # Weaknesses or issues (can be empty)
+    section_notes: str | None = None  # Deep mode only: section-by-section walkthrough
