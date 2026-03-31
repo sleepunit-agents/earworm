@@ -214,3 +214,20 @@ class Layer3Features(BaseModel):
     mix: MixQuality
     mastering: MasteringQuality
     composition: CompositionQuality
+
+
+# --- Phase 2: Voice (Interpretation) ---
+
+
+class VoiceResult(BaseModel):
+    """Natural language interpretation of a track — Art's subjective response."""
+
+    file_path: str
+    mode: str  # "quick" or "deep"
+    description: str  # What the track sounds like
+    opinion: str  # Subjective assessment
+    tags: list[str]  # Genre, mood, texture, energy tags
+    comparisons: list[str]  # Artist/track/genre comparisons
+    highlights: list[str]  # What stands out positively
+    concerns: list[str]  # Weaknesses or issues (can be empty)
+    section_notes: str | None = None  # Deep mode only: section-by-section walkthrough

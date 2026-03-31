@@ -30,6 +30,27 @@ def main() -> None:
         help="Analysis layer: 1=signal, 2=structural, 3=quality (default: 1)",
     )
 
+    # voice command
+    voice = subparsers.add_parser("voice", help="Interpret a track — natural language opinion")
+    voice.add_argument("file", type=Path, help="Path to audio file (WAV, FLAC, MP3, etc.)")
+    voice.add_argument("--json", action="store_true", help="Output raw JSON")
+    voice.add_argument("-o", "--output", type=Path, help="Write output to file")
+    voice.add_argument(
+        "--mode",
+        choices=["quick", "deep"],
+        default="quick",
+        help="Interpretation depth: quick (2-3 sentences) or deep (full walkthrough)",
+    )
+    voice.add_argument(
+        "--provider",
+        choices=["anthropic", "ollama"],
+        help="LLM provider (default: EARWORM_LLM_PROVIDER env or ollama)",
+    )
+    voice.add_argument(
+        "--model",
+        help="Override the LLM model name",
+    )
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -38,6 +59,8 @@ def main() -> None:
 
     if args.command == "analyze":
         _cmd_analyze(args)
+    elif args.command == "voice":
+        _cmd_voice(args)
 
 
 def _cmd_analyze(args: argparse.Namespace) -> None:
@@ -243,6 +266,95 @@ def _format_human_l3(result) -> str:
     lines.append(f"    Melodic range:  {comp.melodic_range_semitones:.1f} semitones")
     lines.append(f"    Struct variety: {comp.structural_variety:.0%}")
     lines.append("")
+
+    lines.append(f"{'=' * 60}")
+    return "\n".join(lines)
+
+
+def _cmd_voice(args: argparse.Namespace) -> None:
+    from earworm.voice import interpret_from_file
+    from earworm.voice.provider import get_provider
+
+    path = args.file
+    if not path.exists():
+        print(f"Error: file not found: {path}", file=sys.stderr)
+        sys.exit(1)
+
+    # Build provider kwargs
+    provider_kwargs = {}
+    if args.model:
+        provider_kwargs["model"] = args.model
+
+    provider = get_provider(provider_name=args.provider, **provider_kwargs)
+
+    print(f"Interpreting ({args.mode}): {path}", file=sys.stderr)
+    print(f"Provider: {type(provider).__name__}", file=sys.stderr)
+    start = time.time()
+
+    result = interpret_from_file(path, mode=args.mode, provider=provider)
+
+    elapsed = time.time() - start
+    print(f"Done in {elapsed:.1f}s", file=sys.stderr)
+
+    if args.json:
+        output = result.model_dump_json(indent=2)
+    else:
+        output = _format_human_voice(result)
+
+    if args.output:
+        args.output.write_text(output)
+        print(f"Written to {args.output}", file=sys.stderr)
+    else:
+        print(output)
+
+
+def _format_human_voice(result) -> str:
+    """Format Voice interpretation for human reading."""
+    lines = []
+    lines.append(f"{'=' * 60}")
+    mode_label = "Quick Take" if result.mode == "quick" else "Deep Listen"
+    lines.append(f"  Earworm Voice — {mode_label}")
+    lines.append(f"{'=' * 60}")
+    lines.append(f"  File: {result.file_path}")
+    lines.append("")
+
+    lines.append("  Description")
+    for line in result.description.split("\n"):
+        lines.append(f"    {line}")
+    lines.append("")
+
+    lines.append("  Opinion")
+    for line in result.opinion.split("\n"):
+        lines.append(f"    {line}")
+    lines.append("")
+
+    if result.tags:
+        lines.append(f"  Tags: {', '.join(result.tags)}")
+        lines.append("")
+
+    if result.comparisons:
+        lines.append("  Reminds me of")
+        for comp in result.comparisons:
+            lines.append(f"    • {comp}")
+        lines.append("")
+
+    if result.highlights:
+        lines.append("  Highlights")
+        for h in result.highlights:
+            lines.append(f"    + {h}")
+        lines.append("")
+
+    if result.concerns:
+        lines.append("  Concerns")
+        for c in result.concerns:
+            lines.append(f"    - {c}")
+        lines.append("")
+
+    if result.section_notes:
+        lines.append("  Section Notes")
+        for line in result.section_notes.split("\n"):
+            lines.append(f"    {line}")
+        lines.append("")
 
     lines.append(f"{'=' * 60}")
     return "\n".join(lines)
