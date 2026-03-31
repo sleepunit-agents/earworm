@@ -1,0 +1,32 @@
+[project]
+name = "earworm"
+version = "0.1.0"
+description = "Art's perceptual system for music comprehension"
+requires-python = ">=3.11"
+dependencies = [
+    "librosa>=0.10",
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "pyloudnorm>=0.1",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+earworm = "earworm.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
