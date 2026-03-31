@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import time
 from pathlib import Path
 
-from earworm.pipeline import analyze_layer1
+from earworm.pipeline import analyze_layer1, analyze_layer2
 
 
 def main() -> None:
@@ -19,10 +18,17 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command")
 
     # analyze command
-    analyze = subparsers.add_parser("analyze", help="Run Layer 1 analysis on an audio file")
+    analyze = subparsers.add_parser("analyze", help="Run analysis on an audio file")
     analyze.add_argument("file", type=Path, help="Path to audio file (WAV, FLAC, MP3, etc.)")
     analyze.add_argument("--json", action="store_true", help="Output raw JSON")
     analyze.add_argument("-o", "--output", type=Path, help="Write JSON to file instead of stdout")
+    analyze.add_argument(
+        "--layer",
+        type=int,
+        choices=[1, 2],
+        default=1,
+        help="Analysis layer: 1=signal features, 2=structural comprehension (default: 1)",
+    )
 
     args = parser.parse_args()
 
@@ -40,10 +46,16 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
         print(f"Error: file not found: {path}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Analyzing: {path}", file=sys.stderr)
+    layer = args.layer
+    print(f"Analyzing (Layer {layer}): {path}", file=sys.stderr)
     start = time.time()
 
-    result = analyze_layer1(path)
+    if layer == 1:
+        result = analyze_layer1(path)
+    else:
+        # Layer 2 runs Layer 1 first if needed for beat data
+        layer1 = analyze_layer1(path)
+        result = analyze_layer2(path, layer1=layer1)
 
     elapsed = time.time() - start
     print(f"Done in {elapsed:.1f}s", file=sys.stderr)
@@ -51,7 +63,10 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
     if args.json:
         output = result.model_dump_json(indent=2)
     else:
-        output = _format_human(result)
+        if layer == 1:
+            output = _format_human_l1(result)
+        else:
+            output = _format_human_l2(result)
 
     if args.output:
         args.output.write_text(output)
@@ -60,11 +75,11 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
         print(output)
 
 
-def _format_human(result) -> str:
-    """Format analysis results for human reading."""
+def _format_human_l1(result) -> str:
+    """Format Layer 1 analysis results for human reading."""
     lines = []
     lines.append(f"{'=' * 60}")
-    lines.append(f"  Earworm Layer 1 Analysis")
+    lines.append("  Earworm Layer 1 Analysis")
     lines.append(f"{'=' * 60}")
     lines.append(f"  File:     {result.file_path}")
     lines.append(f"  Duration: {result.duration_seconds:.1f}s")
@@ -73,7 +88,7 @@ def _format_human(result) -> str:
 
     # Temporal
     t = result.temporal
-    lines.append(f"  Rhythm")
+    lines.append("  Rhythm")
     lines.append(f"    BPM:            {t.bpm:.1f} (confidence: {t.bpm_confidence:.2f})")
     lines.append(f"    Tempo stability: {t.tempo_stability:.2f}")
     lines.append(f"    Onset rate:     {t.onset_rate:.1f}/s")
@@ -82,14 +97,14 @@ def _format_human(result) -> str:
 
     # Harmonic
     h = result.harmonic
-    lines.append(f"  Tonality")
+    lines.append("  Tonality")
     lines.append(f"    Key:            {h.key} (confidence: {h.key_confidence:.2f})")
     lines.append(f"    Harmonic ratio: {h.harmonic_ratio:.2f}")
     lines.append("")
 
     # Spectral
     s = result.spectral
-    lines.append(f"  Spectral")
+    lines.append("  Spectral")
     lines.append(f"    Brightness:     {s.spectral_centroid_mean:.0f} Hz")
     lines.append(f"    Bandwidth:      {s.spectral_bandwidth_mean:.0f} Hz")
     lines.append(f"    Rolloff:        {s.spectral_rolloff_mean:.0f} Hz")
@@ -97,25 +112,76 @@ def _format_human(result) -> str:
     lines.append("")
 
     # Loudness
-    l = result.loudness
-    lines.append(f"  Loudness")
-    lines.append(f"    LUFS:           {l.lufs_integrated:.1f}")
-    lines.append(f"    Peak:           {l.peak_db:.1f} dB")
-    lines.append(f"    RMS:            {l.rms_db:.1f} dB")
-    lines.append(f"    Crest factor:   {l.crest_factor_db:.1f} dB")
-    lines.append(f"    Dynamic range:  {l.lufs_range:.1f} LU")
+    loud = result.loudness
+    lines.append("  Loudness")
+    lines.append(f"    LUFS:           {loud.lufs_integrated:.1f}")
+    lines.append(f"    Peak:           {loud.peak_db:.1f} dB")
+    lines.append(f"    RMS:            {loud.rms_db:.1f} dB")
+    lines.append(f"    Crest factor:   {loud.crest_factor_db:.1f} dB")
+    lines.append(f"    Dynamic range:  {loud.lufs_range:.1f} LU")
     lines.append("")
 
     # Stereo
     st = result.stereo
-    lines.append(f"  Stereo")
+    lines.append("  Stereo")
     if st.is_stereo:
         lines.append(f"    Width:          {st.width_mean:.2f} (std: {st.width_std:.2f})")
         lines.append(f"    Correlation:    {st.correlation_mean:.2f} (min: {st.correlation_min:.2f})")
         lines.append(f"    M/S ratio:      {st.mid_side_ratio:.2f}")
         lines.append(f"    Balance:        {st.balance:+.3f}")
     else:
-        lines.append(f"    Mono source")
+        lines.append("    Mono source")
+    lines.append("")
+
+    lines.append(f"{'=' * 60}")
+    return "\n".join(lines)
+
+
+def _format_human_l2(result) -> str:
+    """Format Layer 2 analysis results for human reading."""
+    lines = []
+    lines.append(f"{'=' * 60}")
+    lines.append("  Earworm Layer 2 Analysis — Structural Comprehension")
+    lines.append(f"{'=' * 60}")
+    lines.append(f"  File:     {result.file_path}")
+    lines.append(f"  Duration: {result.duration_seconds:.1f}s")
+    lines.append("")
+
+    # Segmentation
+    seg = result.segmentation
+    lines.append("  Segmentation")
+    lines.append(f"    Sections:       {seg.n_sections}")
+    label_seq = "".join(chr(65 + lb) for lb in seg.labels)  # 0→A, 1→B, etc.
+    lines.append(f"    Structure:      {label_seq}")
+    for i, (dur, label) in enumerate(zip(seg.section_durations, seg.labels)):
+        start = seg.boundaries[i]
+        lines.append(f"    [{start:6.1f}s] Section {chr(65 + label)} ({dur:.1f}s)")
+    lines.append("")
+
+    # Recurrence
+    rec = result.recurrence
+    lines.append("  Recurrence")
+    lines.append(f"    Distinct types: {rec.n_distinct_labels}")
+    lines.append(f"    Repetition:     {rec.repetition_ratio:.0%} of track is repeated material")
+    lines.append("")
+
+    # Energy arc
+    ea = result.energy_arc
+    lines.append("  Energy Arc")
+    lines.append(f"    Climax at:      {ea.climax_time:.1f}s ({ea.climax_position:.0%} through)")
+    lines.append(f"    Builds:         {ea.n_builds}")
+    lines.append(f"    Drops:          {ea.n_drops}")
+    lines.append(f"    Dynamic spread: {ea.dynamic_spread:.3f}")
+    lines.append("")
+
+    # Phrase structure
+    ph = result.phrase
+    lines.append("  Phrase Structure")
+    lines.append(f"    Phrases:        {ph.n_phrases}")
+    lines.append(f"    Typical length: {ph.typical_phrase_beats:.0f} beats")
+    lines.append(f"    Regularity:     {ph.regularity:.0%}")
+    if ph.irregular_phrases:
+        lines.append(f"    Irregular:      phrases {ph.irregular_phrases}")
     lines.append("")
 
     lines.append(f"{'=' * 60}")

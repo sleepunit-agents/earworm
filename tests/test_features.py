@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 
 from earworm.features.spectral import extract_spectral
 from earworm.features.temporal import extract_temporal

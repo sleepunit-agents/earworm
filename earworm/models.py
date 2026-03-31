@@ -95,3 +95,63 @@ class Layer1Features(BaseModel):
     harmonic: HarmonicFeatures
     loudness: LoudnessFeatures
     stereo: StereoFeatures
+
+
+# --- Layer 2: Structural Comprehension ---
+
+
+class SegmentationFeatures(BaseModel):
+    """Section boundaries and labels from structural segmentation."""
+
+    boundaries: list[float]  # Boundary timestamps in seconds
+    labels: list[int]  # Label per segment (same label = similar sections)
+    n_sections: int  # Total number of detected sections
+    section_durations: list[float]  # Duration of each section in seconds
+
+
+class RecurrenceFeatures(BaseModel):
+    """Self-similarity structure — what repeats, how much, and where."""
+
+    n_distinct_labels: int  # Number of unique section types
+    repetition_ratio: float  # Fraction of track that is repeated material (0-1)
+    label_sequence: list[int]  # Section label sequence (e.g. [0,1,0,1,2,0] = ABABCA)
+    label_durations: dict[int, float]  # Total duration per label in seconds
+    novelty_curve: list[float]  # Novelty score over time (peaks = section changes)
+    novelty_timestamps: list[float]  # Timestamps for novelty curve
+
+
+class EnergyArcFeatures(BaseModel):
+    """How intensity changes over time — builds, releases, climaxes."""
+
+    energy_curve: list[float]  # Normalized energy envelope (0-1) sampled ~2Hz
+    energy_timestamps: list[float]  # Timestamps for energy curve
+    climax_time: float  # Timestamp of peak energy
+    climax_position: float  # 0-1 position in track (0=start, 1=end)
+    n_builds: int  # Number of sustained energy increases
+    n_drops: int  # Number of sharp energy decreases
+    build_times: list[float]  # Start timestamps of builds
+    drop_times: list[float]  # Timestamps of drops
+    dynamic_spread: float  # Range of energy curve (max - min, 0-1)
+
+
+class PhraseFeatures(BaseModel):
+    """Phrase groupings — regularity, typical length, surprises."""
+
+    phrase_boundaries: list[float]  # Phrase boundary timestamps in seconds
+    phrase_lengths_beats: list[float]  # Length of each phrase in beats
+    n_phrases: int
+    typical_phrase_beats: float  # Most common phrase length in beats
+    regularity: float  # How regular the phrasing is (0-1, 1=perfectly regular)
+    irregular_phrases: list[int]  # Indices of phrases that deviate from typical length
+
+
+class Layer2Features(BaseModel):
+    """Complete Layer 2 structural comprehension results."""
+
+    file_path: str
+    duration_seconds: float
+
+    segmentation: SegmentationFeatures
+    recurrence: RecurrenceFeatures
+    energy_arc: EnergyArcFeatures
+    phrase: PhraseFeatures
