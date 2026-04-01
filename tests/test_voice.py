@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 
+import httpx
 import pytest
 
 from earworm.models import (
@@ -31,7 +32,13 @@ from earworm.models import (
 )
 from earworm.voice.interpret import interpret, parse_voice_response
 from earworm.voice.prompt import build_prompt, format_pipeline_data
-from earworm.voice.provider import AnthropicProvider, OllamaProvider, get_provider
+from earworm.voice.provider import (
+    AnthropicProvider,
+    OllamaConnectionError,
+    OllamaModelNotFoundError,
+    OllamaProvider,
+    get_provider,
+)
 
 
 # --- Fixtures ---
@@ -417,6 +424,186 @@ class TestGetProvider:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         provider = get_provider("anthropic", model="claude-haiku-4-5-20251001")
         assert provider.model == "claude-haiku-4-5-20251001"
+
+
+# --- Ollama Model Resolution Tests ---
+
+
+class TestOllamaModelResolution:
+    """Test the three-tier model resolution: explicit > env var > default."""
+
+    def test_explicit_model_wins(self, monkeypatch):
+        monkeypatch.setenv("EARWORM_OLLAMA_MODEL", "should-not-use")
+        provider = OllamaProvider(model="explicit-model")
+        assert provider.model == "explicit-model"
+
+    def test_env_var_fallback(self, monkeypatch):
+        monkeypatch.setenv("EARWORM_OLLAMA_MODEL", "qwen3:14b")
+        provider = OllamaProvider()
+        assert provider.model == "qwen3:14b"
+
+    def test_default_when_no_env(self, monkeypatch):
+        monkeypatch.delenv("EARWORM_OLLAMA_MODEL", raising=False)
+        provider = OllamaProvider()
+        assert provider.model == "llama3.1:8b"
+
+    def test_none_model_uses_env(self, monkeypatch):
+        monkeypatch.setenv("EARWORM_OLLAMA_MODEL", "gemma2:9b")
+        provider = OllamaProvider(model=None)
+        assert provider.model == "gemma2:9b"
+
+
+# --- Ollama Model Validation Tests ---
+
+
+class TestOllamaModelValidation:
+    """Test model validation against the Ollama /api/tags endpoint."""
+
+    def _mock_tags_response(self, models: list[str]):
+        """Create a mock httpx response for /api/tags."""
+        return {"models": [{"name": m} for m in models]}
+
+    @staticmethod
+    def _make_response(status_code: int, json_data: dict) -> httpx.Response:
+        request = httpx.Request("GET", "http://localhost:11434/api/tags")
+        return httpx.Response(status_code, json=json_data, request=request)
+
+    def test_validate_model_found(self, monkeypatch):
+        provider = OllamaProvider(model="qwen3:14b")
+        tags_data = self._mock_tags_response(["qwen3:14b", "llama3.1:8b"])
+
+        def mock_get(url, **kwargs):
+            return self._make_response(200, tags_data)
+
+        monkeypatch.setattr(httpx, "get", mock_get)
+        provider.validate_model()
+        assert provider._validated is True
+
+    def test_validate_model_not_found(self, monkeypatch):
+        provider = OllamaProvider(model="nonexistent:7b")
+        tags_data = self._mock_tags_response(["qwen3:14b", "llama3.1:8b"])
+
+        def mock_get(url, **kwargs):
+            return self._make_response(200, tags_data)
+
+        monkeypatch.setattr(httpx, "get", mock_get)
+        with pytest.raises(OllamaModelNotFoundError) as exc_info:
+            provider.validate_model()
+
+        err = exc_info.value
+        assert err.model == "nonexistent:7b"
+        assert "qwen3:14b" in err.available
+        assert "llama3.1:8b" in err.available
+        assert "ollama pull nonexistent:7b" in str(err)
+
+    def test_validate_caches_result(self, monkeypatch):
+        provider = OllamaProvider(model="qwen3:14b")
+        tags_data = self._mock_tags_response(["qwen3:14b"])
+        call_count = 0
+
+        def mock_get(url, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return self._make_response(200, tags_data)
+
+        monkeypatch.setattr(httpx, "get", mock_get)
+        provider.validate_model()
+        provider.validate_model()
+        assert call_count == 1
+
+    def test_validate_matches_base_name(self, monkeypatch):
+        """'qwen3' should match 'qwen3:14b' (base name without tag)."""
+        provider = OllamaProvider(model="qwen3")
+        tags_data = self._mock_tags_response(["qwen3:14b", "llama3.1:8b"])
+
+        def mock_get(url, **kwargs):
+            return self._make_response(200, tags_data)
+
+        monkeypatch.setattr(httpx, "get", mock_get)
+        provider.validate_model()
+
+    def test_validate_matches_latest_tag(self, monkeypatch):
+        """'mymodel:latest' should match 'mymodel' (without explicit tag)."""
+        provider = OllamaProvider(model="mymodel:latest")
+        tags_data = self._mock_tags_response(["mymodel"])
+
+        def mock_get(url, **kwargs):
+            return self._make_response(200, tags_data)
+
+        monkeypatch.setattr(httpx, "get", mock_get)
+        provider.validate_model()
+
+    def test_connection_error(self, monkeypatch):
+        provider = OllamaProvider(host="http://unreachable:11434", model="any")
+
+        def mock_get(url, **kwargs):
+            raise httpx.ConnectError("Connection refused")
+
+        monkeypatch.setattr(httpx, "get", mock_get)
+        with pytest.raises(OllamaConnectionError) as exc_info:
+            provider.validate_model()
+        assert "unreachable:11434" in str(exc_info.value)
+
+    def test_generate_validates_before_calling(self, monkeypatch):
+        """generate() should call validate_model() before making the request."""
+        provider = OllamaProvider(model="nonexistent:7b")
+        tags_data = self._mock_tags_response(["qwen3:14b"])
+
+        def mock_get(url, **kwargs):
+            return self._make_response(200, tags_data)
+
+        monkeypatch.setattr(httpx, "get", mock_get)
+        with pytest.raises(OllamaModelNotFoundError):
+            provider.generate("system", "prompt")
+
+    def test_empty_model_list(self, monkeypatch):
+        provider = OllamaProvider(model="any-model")
+        tags_data = self._mock_tags_response([])
+
+        def mock_get(url, **kwargs):
+            return self._make_response(200, tags_data)
+
+        monkeypatch.setattr(httpx, "get", mock_get)
+        with pytest.raises(OllamaModelNotFoundError) as exc_info:
+            provider.validate_model()
+        assert "(none)" in str(exc_info.value)
+
+    def test_list_models(self, monkeypatch):
+        provider = OllamaProvider()
+        tags_data = self._mock_tags_response(["qwen3:14b", "llama3.1:8b", "gemma2:9b"])
+
+        def mock_get(url, **kwargs):
+            return self._make_response(200, tags_data)
+
+        monkeypatch.setattr(httpx, "get", mock_get)
+        models = provider.list_models()
+        assert models == ["qwen3:14b", "llama3.1:8b", "gemma2:9b"]
+
+
+# --- Ollama Error Message Tests ---
+
+
+class TestOllamaErrors:
+    def test_model_not_found_error_message(self):
+        err = OllamaModelNotFoundError(
+            "llama3.1:8b",
+            ["qwen3:14b", "gemma2:9b"],
+            "http://localhost:11434",
+        )
+        msg = str(err)
+        assert "llama3.1:8b" in msg
+        assert "qwen3:14b" in msg
+        assert "gemma2:9b" in msg
+        assert "ollama pull llama3.1:8b" in msg
+        assert "localhost:11434" in msg
+
+    def test_model_not_found_empty_list(self):
+        err = OllamaModelNotFoundError("any", [], "http://localhost:11434")
+        assert "(none)" in str(err)
+
+    def test_connection_error_message(self):
+        err = OllamaConnectionError("http://badhost:11434", Exception("refused"))
+        assert "badhost:11434" in str(err)
 
 
 # --- VoiceResult Model Tests ---
