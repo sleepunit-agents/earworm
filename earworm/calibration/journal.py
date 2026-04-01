@@ -15,6 +15,15 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 
+class JournalSampleRef(BaseModel):
+    """A reference to a samplebank sample in a journal entry."""
+
+    sample_id: int
+    filename: str
+    score: float = 0.0
+    why: str = ""  # Why this sample is relevant to the observation
+
+
 class JournalObservation(BaseModel):
     """A single observation about a track — what Art noticed."""
 
@@ -24,6 +33,7 @@ class JournalObservation(BaseModel):
     what_stood_out: str
     what_i_missed: str = ""
     raw_reaction: str = ""
+    sample_references: list[JournalSampleRef] = Field(default_factory=list)
 
 
 class TastePattern(BaseModel):
@@ -95,14 +105,21 @@ class JournalManager:
         what_stood_out: str,
         what_i_missed: str = "",
         raw_reaction: str = "",
+        sample_references: list[JournalSampleRef] | None = None,
     ) -> JournalObservation:
-        """Record an observation about a track."""
+        """Record an observation about a track.
+
+        Args:
+            sample_references: Optional list of samplebank samples that relate
+                to this observation (e.g. "this kick sounds like sample X").
+        """
         obs = JournalObservation(
             track_id=track_id,
             what_i_noticed=what_i_noticed,
             what_stood_out=what_stood_out,
             what_i_missed=what_i_missed,
             raw_reaction=raw_reaction,
+            sample_references=sample_references or [],
         )
         self.journal.observations.append(obs)
         return obs
