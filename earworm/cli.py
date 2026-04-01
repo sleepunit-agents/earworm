@@ -51,6 +51,45 @@ def main() -> None:
         help="Override the LLM model name",
     )
 
+    # bridge command
+    bridge_parser = subparsers.add_parser(
+        "bridge", help="Find related samples in samplebank via CLAP"
+    )
+    bridge_parser.add_argument(
+        "file", type=Path, help="Path to audio file to analyze and search"
+    )
+    bridge_parser.add_argument("--json", action="store_true", help="Output raw JSON")
+    bridge_parser.add_argument(
+        "-o", "--output", type=Path, help="Write output to file"
+    )
+    bridge_parser.add_argument(
+        "--limit", type=int, default=20, help="Max results to return (default: 20)"
+    )
+    bridge_parser.add_argument(
+        "--mode",
+        choices=["text", "audio", "combined"],
+        default="text",
+        help="Search mode: text (Voice→samples), audio (track→samples), combined (default: text)",
+    )
+    bridge_parser.add_argument(
+        "--voice-mode",
+        choices=["quick", "deep"],
+        default="quick",
+        help="Voice interpretation depth for text search (default: quick)",
+    )
+    bridge_parser.add_argument(
+        "--samplebank-url", help="Samplebank API URL (default: env or localhost:8000)"
+    )
+    bridge_parser.add_argument(
+        "--clap-url", help="CLAP service URL (default: env or localhost:8100)"
+    )
+    bridge_parser.add_argument(
+        "--qdrant-url", help="Qdrant URL (default: env or localhost:6333)"
+    )
+    bridge_parser.add_argument(
+        "--status", action="store_true", help="Check samplebank bridge status and exit"
+    )
+
     # calibrate command group
     calibrate = subparsers.add_parser("calibrate", help="Phase 3 calibration tools")
     cal_sub = calibrate.add_subparsers(dest="cal_command")
@@ -157,6 +196,8 @@ def main() -> None:
         _cmd_analyze(args)
     elif args.command == "voice":
         _cmd_voice(args)
+    elif args.command == "bridge":
+        _cmd_bridge(args)
     elif args.command == "calibrate":
         _cmd_calibrate(args)
 
@@ -453,6 +494,101 @@ def _format_human_voice(result) -> str:
         for line in result.section_notes.split("\n"):
             lines.append(f"    {line}")
         lines.append("")
+
+    lines.append(f"{'=' * 60}")
+    return "\n".join(lines)
+
+
+def _cmd_bridge(args: argparse.Namespace) -> None:
+    from earworm.bridge import SamplebankBridge
+
+    bridge = SamplebankBridge(
+        samplebank_url=args.samplebank_url,
+        clap_url=args.clap_url,
+        qdrant_url=args.qdrant_url,
+    )
+
+    if args.status:
+        status = bridge.check_status()
+        if args.json:
+            print(status.model_dump_json(indent=2))
+        else:
+            reachable = "yes" if status.samplebank_reachable else "NO"
+            print(f"Samplebank reachable: {reachable}")
+            print(f"Indexed: {status.indexed_samples}/{status.total_samples} ({status.coverage_pct:.1f}%)")
+        return
+
+    path = args.file
+    if not path.exists():
+        print(f"Error: file not found: {path}", file=sys.stderr)
+        sys.exit(1)
+
+    mode = args.mode
+    limit = args.limit
+
+    if mode in ("text", "combined"):
+        from earworm.voice import interpret_from_file
+        from earworm.voice.provider import get_provider
+
+        provider = get_provider()
+        print(f"Running Voice interpretation ({args.voice_mode}): {path}", file=sys.stderr)
+        start = time.time()
+        voice_result = interpret_from_file(path, mode=args.voice_mode, provider=provider)
+        elapsed = time.time() - start
+        print(f"Voice done in {elapsed:.1f}s", file=sys.stderr)
+    else:
+        voice_result = None
+
+    print(f"Searching samplebank ({mode} mode)...", file=sys.stderr)
+    start = time.time()
+
+    if mode == "text":
+        results = bridge.search_by_voice(voice_result, limit=limit)
+    elif mode == "audio":
+        results = bridge.search_by_audio(str(path), limit=limit)
+    else:
+        results = bridge.search_combined(voice_result, str(path), limit=limit)
+
+    elapsed = time.time() - start
+    print(f"Found {len(results)} matches in {elapsed:.1f}s", file=sys.stderr)
+
+    if args.json:
+        import json as json_mod
+
+        output = json_mod.dumps(
+            {
+                "mode": mode,
+                "query_file": str(path),
+                "results": [r.model_dump() for r in results],
+            },
+            indent=2,
+        )
+    else:
+        output = _format_bridge_results(results, mode)
+
+    if args.output:
+        args.output.write_text(output)
+        print(f"Written to {args.output}", file=sys.stderr)
+    else:
+        print(output)
+
+
+def _format_bridge_results(results: list, mode: str) -> str:
+    lines = []
+    lines.append(f"{'=' * 60}")
+    lines.append(f"  Earworm Bridge — {mode} search")
+    lines.append(f"{'=' * 60}")
+
+    if not results:
+        lines.append("  No matching samples found.")
+    else:
+        lines.append(f"  {len(results)} matches:")
+        lines.append("")
+        for i, r in enumerate(results, 1):
+            lines.append(f"  {i:3d}. [{r.score:.3f}] {r.filename}")
+            lines.append(f"       {r.path}")
+            if r.match_source != mode:
+                lines.append(f"       (via {r.match_source})")
 
     lines.append(f"{'=' * 60}")
     return "\n".join(lines)
