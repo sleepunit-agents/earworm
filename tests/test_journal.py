@@ -10,6 +10,7 @@ from earworm.calibration.journal import (
     DivergenceType,
     JournalManager,
     JournalObservation,
+    JournalSampleRef,
     TasteJournal,
     TastePattern,
 )
@@ -293,3 +294,86 @@ class TestJournalWithCalibration:
         assert pattern is not None
         assert len(pattern.supporting_tracks) == 2
         assert pattern.confidence == 0.7
+
+
+class TestJournalSampleReferences:
+    def test_observation_with_sample_refs(self, tmp_path):
+        mgr = JournalManager(journal_path=tmp_path / "journal.json")
+        refs = [
+            JournalSampleRef(
+                sample_id=42,
+                filename="kick_808.wav",
+                score=0.95,
+                why="Same low-end punch as the track's kick",
+            ),
+            JournalSampleRef(
+                sample_id=99,
+                filename="hihat_open.wav",
+                score=0.72,
+                why="Similar high-hat shimmer",
+            ),
+        ]
+        obs = mgr.add_observation(
+            track_id="test-track",
+            what_i_noticed="Punchy 808 kick with open hi-hat layering",
+            what_stood_out="The kick-hat interplay",
+            sample_references=refs,
+        )
+        assert len(obs.sample_references) == 2
+        assert obs.sample_references[0].sample_id == 42
+        assert obs.sample_references[0].filename == "kick_808.wav"
+        assert obs.sample_references[1].why == "Similar high-hat shimmer"
+
+    def test_observation_without_refs_has_empty_list(self, tmp_path):
+        mgr = JournalManager(journal_path=tmp_path / "journal.json")
+        obs = mgr.add_observation(
+            track_id="test-track",
+            what_i_noticed="Something",
+            what_stood_out="Something else",
+        )
+        assert obs.sample_references == []
+
+    def test_sample_refs_persist_through_save_load(self, tmp_path):
+        journal_path = tmp_path / "journal.json"
+        mgr = JournalManager(journal_path=journal_path)
+        refs = [
+            JournalSampleRef(
+                sample_id=42,
+                filename="kick_808.wav",
+                score=0.95,
+                why="Matches the low end",
+            ),
+        ]
+        mgr.add_observation(
+            track_id="test-track",
+            what_i_noticed="Punchy kick",
+            what_stood_out="The kick",
+            sample_references=refs,
+        )
+        mgr.save()
+
+        mgr2 = JournalManager(journal_path=journal_path)
+        obs = mgr2.journal.observations[0]
+        assert len(obs.sample_references) == 1
+        assert obs.sample_references[0].sample_id == 42
+        assert obs.sample_references[0].why == "Matches the low end"
+
+    def test_sample_ref_model_defaults(self):
+        ref = JournalSampleRef(sample_id=1, filename="test.wav")
+        assert ref.score == 0.0
+        assert ref.why == ""
+
+    def test_sample_ref_serialization(self):
+        ref = JournalSampleRef(
+            sample_id=42,
+            filename="kick.wav",
+            score=0.9,
+            why="Great kick",
+        )
+        data = ref.model_dump()
+        assert data == {
+            "sample_id": 42,
+            "filename": "kick.wav",
+            "score": 0.9,
+            "why": "Great kick",
+        }

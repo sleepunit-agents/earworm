@@ -219,6 +219,16 @@ class Layer3Features(BaseModel):
 # --- Phase 2: Voice (Interpretation) ---
 
 
+class SampleReference(BaseModel):
+    """A sample from samplebank that matched this track's perception."""
+
+    sample_id: int
+    filename: str
+    path: str
+    score: float  # Cosine similarity (0-1)
+    match_source: str  # "text", "audio", or "combined"
+
+
 class VoiceResult(BaseModel):
     """Natural language interpretation of a track — Art's subjective response."""
 
@@ -231,3 +241,4 @@ class VoiceResult(BaseModel):
     highlights: list[str]  # What stands out positively
     concerns: list[str]  # Weaknesses or issues (can be empty)
     section_notes: str | None = None  # Deep mode only: section-by-section walkthrough
+    related_samples: list[SampleReference] | None = None  # Samples matching this track's perception

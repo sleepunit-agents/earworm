@@ -50,6 +50,17 @@ def main() -> None:
         "--model",
         help="Override the LLM model name",
     )
+    voice.add_argument(
+        "--find-samples",
+        action="store_true",
+        help="Enrich output with related samples from samplebank",
+    )
+    voice.add_argument(
+        "--sample-limit",
+        type=int,
+        default=10,
+        help="Max related samples to include (default: 10)",
+    )
 
     # bridge command
     bridge_parser = subparsers.add_parser(
@@ -149,6 +160,10 @@ def main() -> None:
     journal_observe.add_argument("--stood-out", required=True, help="What stood out")
     journal_observe.add_argument("--missed", default="", help="What you missed (if anything)")
     journal_observe.add_argument("--reaction", default="", help="Raw gut reaction")
+    journal_observe.add_argument(
+        "--samples", nargs="*", default=[],
+        help="Sample references as 'id:filename:score:why' (e.g. '42:kick_808.wav:0.9:matches the low end')",
+    )
     journal_observe.add_argument(
         "--corpus-dir", type=Path, help="Corpus directory (default: ./calibration)"
     )
@@ -435,6 +450,18 @@ def _cmd_voice(args: argparse.Namespace) -> None:
     elapsed = time.time() - start
     print(f"Done in {elapsed:.1f}s", file=sys.stderr)
 
+    if args.find_samples:
+        from earworm.bridge.enrich import enrich_voice_with_samples
+
+        print("Finding related samples...", file=sys.stderr)
+        start = time.time()
+        result = enrich_voice_with_samples(
+            result, audio_path=str(path), limit=args.sample_limit, mode="text"
+        )
+        elapsed = time.time() - start
+        n = len(result.related_samples) if result.related_samples else 0
+        print(f"Found {n} related samples in {elapsed:.1f}s", file=sys.stderr)
+
     if args.json:
         output = result.model_dump_json(indent=2)
     else:
@@ -493,6 +520,13 @@ def _format_human_voice(result) -> str:
         lines.append("  Section Notes")
         for line in result.section_notes.split("\n"):
             lines.append(f"    {line}")
+        lines.append("")
+
+    if result.related_samples:
+        lines.append("  Related Samples")
+        for i, s in enumerate(result.related_samples, 1):
+            lines.append(f"    {i:3d}. [{s.score:.3f}] {s.filename}")
+            lines.append(f"         {s.path}")
         lines.append("")
 
     lines.append(f"{'=' * 60}")
@@ -785,15 +819,31 @@ def _cmd_journal(args: argparse.Namespace) -> None:
             print(f"{'=' * 60}")
 
     elif args.journal_command == "observe":
+        from earworm.calibration.journal import JournalSampleRef
+
+        sample_refs = []
+        for s in args.samples:
+            parts = s.split(":", 3)
+            if len(parts) >= 2:
+                sample_refs.append(JournalSampleRef(
+                    sample_id=int(parts[0]),
+                    filename=parts[1],
+                    score=float(parts[2]) if len(parts) > 2 else 0.0,
+                    why=parts[3] if len(parts) > 3 else "",
+                ))
+
         obs = mgr.add_observation(
             track_id=args.track_id,
             what_i_noticed=args.noticed,
             what_stood_out=args.stood_out,
             what_i_missed=args.missed,
             raw_reaction=args.reaction,
+            sample_references=sample_refs if sample_refs else None,
         )
         mgr.save()
-        print(f"Observation recorded for {obs.track_id}", file=sys.stderr)
+        n_samples = len(obs.sample_references)
+        suffix = f" ({n_samples} sample refs)" if n_samples else ""
+        print(f"Observation recorded for {obs.track_id}{suffix}", file=sys.stderr)
 
     elif args.journal_command == "pattern":
         pattern = mgr.add_pattern(
