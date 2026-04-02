@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 from earworm.pipeline import analyze_layer1, analyze_layer2, analyze_layer3
-from earworm.compose import compose, compose_generative, ComposeManifest
+from earworm.compose import compose, compose_generative
 from earworm.compose.composer import compose_from_json
 
 

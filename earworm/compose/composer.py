@@ -495,8 +495,6 @@ def _chord_progression(mode: str, n_chords: int) -> list[int]:
 def _transpose_octaves(tone: Tone, octaves: int) -> Tone:
     """Return a new Tone shifted by *octaves* octaves."""
     current = str(tone)  # e.g. 'C4'
-    # Extract letter + accidentals + octave number
-    import re
     m = re.match(r"([A-G][#b]?)(\d+)", current)
     if not m:
         return tone

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 import scipy.io.wavfile
@@ -65,7 +63,7 @@ def layer2_fixture() -> Layer2Features:
 def test_compose_produces_wav(layer2_fixture, tmp_path):
     """compose() writes a valid stereo WAV file."""
     output = tmp_path / "response.wav"
-    manifest = compose(
+    _ = compose(
         layer2_fixture,
         output,
         bpm_override=120.0,
@@ -136,7 +134,7 @@ def test_compose_major_key(layer2_fixture, tmp_path):
 def test_compose_generative_produces_wav(tmp_path):
     """compose_generative() writes a valid stereo WAV file."""
     output = tmp_path / "gen.wav"
-    manifest = compose_generative(
+    _ = compose_generative(
         output=output,
         bpm=120.0,
         key="C minor",
