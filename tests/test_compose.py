@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 import scipy.io.wavfile
 
 from earworm.compose import compose
+from earworm.compose.renderer import _apply_envelope, _ATTACK_SAMPLES, _RELEASE_SAMPLES
 from earworm.models import Layer2Features
+
+SAMPLE_RATE = 44100
 
 
 @pytest.fixture
@@ -121,3 +125,56 @@ def test_compose_major_key(layer2_fixture, tmp_path):
     assert manifest.key == "D"
     assert manifest.mode == "major"
     assert output.exists()
+
+
+def test_apply_envelope_attack_from_zero():
+    """_apply_envelope should start at 0 and ramp up (attack)."""
+    n = SAMPLE_RATE  # 1 second of audio
+    samples = np.ones(n, dtype=np.float64) * 1000.0
+    result = _apply_envelope(samples)
+
+    # First sample must be (near) zero — start of attack ramp
+    assert result[0] == pytest.approx(0.0, abs=1e-6)
+    # Sample at half attack should be ~0.5
+    half_att = _ATTACK_SAMPLES // 2
+    assert 0.4 < result[half_att] / 1000.0 < 0.6
+    # Sample after attack should be at full amplitude
+    assert result[_ATTACK_SAMPLES + 10] == pytest.approx(1000.0, rel=1e-3)
+
+
+def test_apply_envelope_release_to_zero():
+    """_apply_envelope should end at 0 (release ramp)."""
+    n = SAMPLE_RATE
+    samples = np.ones(n, dtype=np.float64) * 1000.0
+    result = _apply_envelope(samples)
+
+    # Last sample must be (near) zero — end of release ramp
+    assert result[-1] == pytest.approx(0.0, abs=1e-6)
+    # Sample before release starts should still be at full amplitude
+    assert result[-(  _RELEASE_SAMPLES + 10)] == pytest.approx(1000.0, rel=1e-3)
+
+
+def test_apply_envelope_short_note():
+    """_apply_envelope should not error on very short notes (n < attack + release)."""
+    # 5 ms note — shorter than both attack and release constants
+    n = int(0.005 * SAMPLE_RATE)
+    samples = np.ones(n, dtype=np.float64) * 500.0
+    result = _apply_envelope(samples)
+
+    assert len(result) == n
+    # Must still start and end near zero
+    assert result[0] == pytest.approx(0.0, abs=1e-6)
+    assert result[-1] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_compose_attack_starts_near_zero(layer2_fixture, tmp_path):
+    """Rendered audio must start near zero amplitude (attack envelope applied)."""
+    output = tmp_path / "response.wav"
+    compose(layer2_fixture, output, bpm_override=120.0, key_override="C minor", duration_override=5.0)
+
+    rate, data = scipy.io.wavfile.read(str(output))
+    # First 10 samples should be very small — start of 20 ms attack ramp
+    first_10 = np.abs(data[:10, 0]).astype(np.float32) / 32767.0
+    assert np.max(first_10) < 0.05, (
+        f"Expected near-zero amplitude at start (attack envelope), got max={np.max(first_10):.4f}"
+    )
