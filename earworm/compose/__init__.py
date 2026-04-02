@@ -5,6 +5,6 @@ pytheory. The composition responds to the source track's structural DNA
 (energy arc, phrase structure, section count) without imitating it.
 """
 
-from earworm.compose.composer import ComposeManifest, compose
+from earworm.compose.composer import ComposeManifest, compose, compose_generative
 
-__all__ = ["compose", "ComposeManifest"]
+__all__ = ["compose", "compose_generative", "ComposeManifest"]
