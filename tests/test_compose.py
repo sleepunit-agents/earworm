@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 import scipy.io.wavfile
@@ -62,7 +60,7 @@ def layer2_fixture() -> Layer2Features:
 def test_compose_produces_wav(layer2_fixture, tmp_path):
     """compose() writes a valid stereo WAV file."""
     output = tmp_path / "response.wav"
-    manifest = compose(
+    _ = compose(
         layer2_fixture,
         output,
         bpm_override=120.0,
