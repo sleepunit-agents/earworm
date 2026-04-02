@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from earworm.structure.segmentation import extract_segmentation
+from earworm.structure.segmentation import extract_segmentation, _merge_short_sections
 from earworm.structure.recurrence import extract_recurrence
 from earworm.structure.energy import extract_energy_arc
 from earworm.structure.phrase import extract_phrase
@@ -112,6 +112,75 @@ class TestSegmentation:
         y, sr = rhythmic_signal
         result = extract_segmentation(y, sr)
         assert result.boundaries == sorted(result.boundaries)
+
+    def test_no_sub_second_sections(self, rhythmic_signal):
+        """All sections should be at least ~2 seconds long for real audio."""
+        y, sr = rhythmic_signal
+        result = extract_segmentation(y, sr)
+        for dur in result.section_durations:
+            assert dur >= 1.5
+
+    def test_long_signal_reasonable_sections(self):
+        """A 5-minute signal shouldn't produce a single mega-section."""
+        sr = 22050
+        duration = 300.0
+        n = int(sr * duration)
+        t = np.linspace(0, duration, n, endpoint=False)
+        # Create distinct sections: low, mid, high frequencies cycling
+        signal = np.zeros(n, dtype=np.float32)
+        section_dur = 60.0
+        freqs = [200, 800, 400, 1200, 300]
+        for i, freq in enumerate(freqs):
+            start = int(i * section_dur * sr)
+            end = min(int((i + 1) * section_dur * sr), n)
+            segment_t = t[start:end]
+            signal[start:end] = 0.5 * np.sin(2 * np.pi * freq * segment_t)
+
+        result = extract_segmentation(signal, sr)
+        # No section should be more than 70% of the track
+        max_dur = max(result.section_durations)
+        assert max_dur < duration * 0.7, (
+            f"Largest section is {max_dur:.1f}s ({max_dur/duration:.0%} of track)"
+        )
+        assert result.n_sections >= 3
+
+
+# --- Merge Short Sections Tests ---
+
+
+class TestMergeShortSections:
+    def test_no_change_when_all_long(self):
+        times = [0.0, 30.0, 60.0, 90.0]
+        result = _merge_short_sections(times, 5.0)
+        assert result == times
+
+    def test_removes_tiny_section(self):
+        times = [0.0, 30.0, 30.5, 60.0]
+        result = _merge_short_sections(times, 5.0)
+        assert len(result) < len(times)
+        assert result[0] == 0.0
+        assert result[-1] == 60.0
+
+    def test_preserves_endpoints(self):
+        times = [0.0, 1.0, 100.0]
+        result = _merge_short_sections(times, 5.0)
+        assert result[0] == 0.0
+        assert result[-1] == 100.0
+
+    def test_single_section_untouched(self):
+        times = [0.0, 10.0]
+        result = _merge_short_sections(times, 5.0)
+        assert result == [0.0, 10.0]
+
+    def test_multiple_tiny_sections_merged(self):
+        times = [0.0, 0.5, 1.0, 1.5, 2.0, 100.0]
+        result = _merge_short_sections(times, 5.0)
+        assert result == [0.0, 100.0]
+
+    def test_preserves_valid_middle_section(self):
+        times = [0.0, 40.0, 60.0, 100.0]
+        result = _merge_short_sections(times, 5.0)
+        assert result == [0.0, 40.0, 60.0, 100.0]
 
 
 # --- Recurrence Tests ---
