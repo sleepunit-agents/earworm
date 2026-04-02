@@ -7,7 +7,7 @@ import pytest
 
 from earworm.quality.technical import extract_technical
 from earworm.quality.mix import extract_mix
-from earworm.quality.mastering import extract_mastering
+from earworm.quality.mastering import extract_mastering, _detect_limiter_artifacts
 from earworm.quality.composition import extract_composition
 from earworm.models import LoudnessFeatures, Layer3Features
 
@@ -126,6 +126,41 @@ def compressed_loudness() -> LoudnessFeatures:
         crest_factor_db=4.0,
         loudness_curve=[-8.0, -8.5, -7.5, -8.0, -8.2],
     )
+
+
+@pytest.fixture
+def brickwalled_sine() -> tuple[np.ndarray, int]:
+    """5 seconds of brickwall-limited sine — flat-topped clipping.
+
+    Simulates modern loudness-war mastering: signal driven hard into a
+    brickwall limiter, producing flat-topped waveforms at ±0.99.
+    """
+    sr = 48000
+    t = np.linspace(0, 5.0, int(sr * 5.0), endpoint=False)
+    y = 1.3 * np.sin(2 * np.pi * 440 * t)
+    y = np.clip(y, -0.99, 0.99)
+    return y.astype(np.float32), sr
+
+
+@pytest.fixture
+def hot_mastered_sine() -> tuple[np.ndarray, int]:
+    """5 seconds of loud but naturally peaked sine — no flat-topping.
+
+    Simulates a pre-loudness-war hot master: signal is loud and frequently
+    near max, but peaks are natural (not clamped). Like Xpander at -8 LUFS.
+    """
+    sr = 48000
+    t = np.linspace(0, 5.0, int(sr * 5.0), endpoint=False)
+    # Multiple overlapping sines that frequently hit near-max but with
+    # natural waveform shape (no flat tops)
+    y = (
+        0.45 * np.sin(2 * np.pi * 440 * t)
+        + 0.35 * np.sin(2 * np.pi * 880 * t + 0.3)
+        + 0.25 * np.sin(2 * np.pi * 220 * t + 0.7)
+    )
+    # Normalize so peaks touch 0.98 but waveform is never flat-topped
+    y = y / np.max(np.abs(y)) * 0.98
+    return y.astype(np.float32), sr
 
 
 # --- Technical Quality Tests ------------------------------------------------
@@ -250,6 +285,61 @@ class TestMastering:
         y, sr = clipped_sine
         result = extract_mastering(y, sr, fake_loudness)
         assert result.limiter_artifact_score > 0.1
+
+
+class TestLimiterDetection:
+    """Targeted tests for _detect_limiter_artifacts.
+
+    These verify the algorithm correctly distinguishes brickwall limiting
+    (flat-topped waveforms) from naturally loud masters with preserved
+    transient character.
+    """
+
+    def test_silence_scores_zero(self):
+        y = np.zeros(48000 * 5, dtype=np.float32)
+        assert _detect_limiter_artifacts(y, 48000) == 0.0
+
+    def test_quiet_signal_scores_zero(self):
+        sr = 48000
+        t = np.linspace(0, 5.0, sr * 5, endpoint=False)
+        y = (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+        assert _detect_limiter_artifacts(y, sr) == 0.0
+
+    def test_brickwalled_scores_high(self, brickwalled_sine):
+        """A hard-clipped sine should be flagged as heavily limited."""
+        y, sr = brickwalled_sine
+        score = _detect_limiter_artifacts(y, sr)
+        assert score > 0.5, f"Brickwalled signal scored too low: {score}"
+
+    def test_hot_master_scores_low(self, hot_mastered_sine):
+        """A loud but naturally peaked signal should NOT be flagged.
+
+        This is the core regression test for earworm #18 — pre-loudness-war
+        masters like Xpander should not be penalized for being loud.
+        """
+        y, sr = hot_mastered_sine
+        score = _detect_limiter_artifacts(y, sr)
+        assert score < 0.1, f"Hot natural master scored too high: {score}"
+
+    def test_brickwall_beats_natural(self, brickwalled_sine, hot_mastered_sine):
+        """Brickwalled signal should always score much higher than natural."""
+        bw_score = _detect_limiter_artifacts(*brickwalled_sine)
+        nat_score = _detect_limiter_artifacts(*hot_mastered_sine)
+        assert bw_score > nat_score * 5, (
+            f"Insufficient separation: brickwall={bw_score}, natural={nat_score}"
+        )
+
+    def test_sample_rate_independence(self):
+        """Same physical signal at different sample rates should score similarly."""
+        scores = []
+        for sr in [22050, 44100, 48000, 96000]:
+            t = np.linspace(0, 2.0, int(sr * 2.0), endpoint=False)
+            y = 1.3 * np.sin(2 * np.pi * 440 * t)
+            y = np.clip(y, -0.99, 0.99).astype(np.float32)
+            scores.append(_detect_limiter_artifacts(y, sr))
+        assert max(scores) - min(scores) < 0.25, (
+            f"Scores vary too much across sample rates: {scores}"
+        )
 
 
 # --- Composition Quality Tests -----------------------------------------------
