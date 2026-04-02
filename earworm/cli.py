@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 
 from earworm.pipeline import analyze_layer1, analyze_layer2, analyze_layer3
+from earworm.compose import compose, ComposeManifest
+from earworm.compose.composer import compose_from_json
 
 
 def main() -> None:
@@ -99,6 +101,40 @@ def main() -> None:
     )
     bridge_parser.add_argument(
         "--status", action="store_true", help="Check samplebank bridge status and exit"
+    )
+
+    # compose command
+    compose_parser = subparsers.add_parser(
+        "compose", help="Generate a structural response composition from analysis"
+    )
+    compose_parser.add_argument(
+        "file", type=Path, help="Audio file to analyze and compose from"
+    )
+    compose_parser.add_argument(
+        "-o", "--output", type=Path, help="Output WAV file (default: <file>_response.wav)"
+    )
+    compose_parser.add_argument(
+        "--from-json", type=Path, dest="from_json",
+        help="Skip analysis — use existing JSON analysis file"
+    )
+    compose_parser.add_argument(
+        "--style",
+        choices=["edm"],
+        default="edm",
+        help="Instrument palette (default: edm)",
+    )
+    compose_parser.add_argument(
+        "--bpm", type=float, help="Override BPM"
+    )
+    compose_parser.add_argument(
+        "--key", help="Override root key (e.g. 'C minor', 'F# major')"
+    )
+    compose_parser.add_argument(
+        "--duration", type=float, dest="duration",
+        help="Override composition length in seconds (default: match source)"
+    )
+    compose_parser.add_argument(
+        "--json", action="store_true", help="Output manifest JSON to stdout"
     )
 
     # calibrate command group
@@ -213,6 +249,8 @@ def main() -> None:
         _cmd_voice(args)
     elif args.command == "bridge":
         _cmd_bridge(args)
+    elif args.command == "compose":
+        _cmd_compose(args)
     elif args.command == "calibrate":
         _cmd_calibrate(args)
 
@@ -423,6 +461,63 @@ def _format_human_l3(result) -> str:
 
     lines.append(f"{'=' * 60}")
     return "\n".join(lines)
+
+
+def _cmd_compose(args: argparse.Namespace) -> None:
+    import json as _json
+
+    file_path = args.file
+
+    # Determine output path
+    output = args.output
+    if output is None:
+        output = file_path.parent / (file_path.stem + "_response.wav")
+
+    if args.from_json:
+        # Use existing analysis JSON
+        if not args.from_json.exists():
+            print(f"Error: analysis file not found: {args.from_json}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Composing from: {args.from_json}", file=sys.stderr)
+        print(f"Output: {output}", file=sys.stderr)
+        manifest = compose_from_json(
+            args.from_json,
+            output,
+            style=args.style,
+            bpm_override=args.bpm,
+            key_override=args.key,
+            duration_override=args.duration,
+        )
+    else:
+        # Run full analysis first
+        if not file_path.exists():
+            print(f"Error: file not found: {file_path}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Analyzing (Layer 1+2): {file_path}", file=sys.stderr)
+        start = time.time()
+        layer1 = analyze_layer1(file_path)
+        layer2 = analyze_layer2(file_path, layer1=layer1)
+        elapsed = time.time() - start
+        print(f"Analysis complete in {elapsed:.1f}s", file=sys.stderr)
+        print(f"Composing → {output}", file=sys.stderr)
+        manifest = compose(
+            layer2,
+            output,
+            layer1=layer1,
+            style=args.style,
+            bpm_override=args.bpm,
+            key_override=args.key,
+            duration_override=args.duration,
+        )
+
+    if args.json:
+        print(_json.dumps(manifest.model_dump(), indent=2))
+    else:
+        print(f"Written: {manifest.output_file}")
+        print(f"BPM: {manifest.bpm:.0f}  Key: {manifest.key} {manifest.mode}")
+        print(f"Sections: {manifest.n_sections}  Phrases: {manifest.n_phrases}")
+        print(f"Chord map: {manifest.chord_map}")
+        print(f"Duration: {manifest.duration_seconds:.1f}s")
 
 
 def _cmd_voice(args: argparse.Namespace) -> None:
