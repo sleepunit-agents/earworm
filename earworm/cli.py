@@ -10,6 +10,7 @@ from pathlib import Path
 from earworm.pipeline import analyze_layer1, analyze_layer2, analyze_layer3
 from earworm.compose import compose, compose_generative
 from earworm.compose.composer import compose_from_json
+from earworm.compose.strudel import to_strudel, to_strudel_generative
 
 
 def main() -> None:
@@ -198,6 +199,55 @@ def main() -> None:
         "--json", action="store_true", help="Output manifest JSON to stdout"
     )
 
+    # strudel command — generate Strudel REPL code
+    strudel_parser = subparsers.add_parser(
+        "strudel", help="Generate Strudel REPL code from analysis or parameters"
+    )
+    strudel_parser.add_argument(
+        "file", type=Path, nargs="?",
+        help="Audio file to analyze (omit with --generative)"
+    )
+    strudel_parser.add_argument(
+        "--from-json", type=Path, dest="from_json",
+        help="Use existing analysis JSON instead of analyzing audio"
+    )
+    strudel_parser.add_argument(
+        "--generative", action="store_true",
+        help="Pure generative mode — no source audio required"
+    )
+    strudel_parser.add_argument(
+        "--sections", type=int, default=8,
+        help="Number of sections in generative mode (default: 8)"
+    )
+    strudel_parser.add_argument(
+        "--pattern", default="",
+        help="Section letter pattern, e.g. AABABCABC"
+    )
+    strudel_parser.add_argument(
+        "--energy",
+        choices=["arc", "peak-drop", "flat", "pulse"],
+        default="arc",
+        help="Energy arc preset for generative mode (default: arc)"
+    )
+    strudel_parser.add_argument(
+        "--bpm", type=float, help="BPM override"
+    )
+    strudel_parser.add_argument(
+        "--key", help="Key signature (e.g. 'C minor', 'F# major')"
+    )
+    strudel_parser.add_argument(
+        "--duration", type=float, default=180.0,
+        help="Duration in seconds for generative mode (default: 180)"
+    )
+    strudel_parser.add_argument(
+        "--no-drums", action="store_true",
+        help="Omit drum patterns"
+    )
+    strudel_parser.add_argument(
+        "-o", "--output", type=Path,
+        help="Write Strudel code to file instead of stdout"
+    )
+
     # calibrate command group
     calibrate = subparsers.add_parser("calibrate", help="Phase 3 calibration tools")
     cal_sub = calibrate.add_subparsers(dest="cal_command")
@@ -312,6 +362,8 @@ def main() -> None:
         _cmd_bridge(args)
     elif args.command in ("compose", "generate"):
         _cmd_compose(args)
+    elif args.command == "strudel":
+        _cmd_strudel(args)
     elif args.command == "calibrate":
         _cmd_calibrate(args)
 
@@ -613,6 +665,78 @@ def _cmd_compose(args: argparse.Namespace) -> None:
         print(f"Sections: {manifest.n_sections}  Phrases: {manifest.n_phrases}")
         print(f"Chord map: {manifest.chord_map}")
         print(f"Duration: {manifest.duration_seconds:.1f}s")
+
+
+def _cmd_strudel(args: argparse.Namespace) -> None:
+    import json as _json
+
+    is_generative = (
+        getattr(args, "generative", False)
+        or getattr(args, "file", None) is None
+    )
+    include_drums = not getattr(args, "no_drums", False)
+
+    if is_generative:
+        bpm = args.bpm or 120.0
+        key = args.key or "A minor"
+        print(f"Generating Strudel (generative): BPM={bpm:.0f} Key={key}", file=sys.stderr)
+
+        code = to_strudel_generative(
+            bpm=bpm,
+            key=key,
+            n_sections=getattr(args, "sections", 8),
+            section_pattern=getattr(args, "pattern", ""),
+            energy_preset=getattr(args, "energy", "arc"),
+            duration_seconds=args.duration,
+            include_drums=include_drums,
+        )
+    elif args.from_json:
+        if not args.from_json.exists():
+            print(f"Error: analysis file not found: {args.from_json}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Generating Strudel from: {args.from_json}", file=sys.stderr)
+
+        with open(args.from_json) as f:
+            data = _json.load(f)
+
+        from earworm.models import Layer1Features, Layer2Features
+        layer2 = Layer2Features.model_validate(data)
+        layer1 = None
+        if "temporal" in data and "harmonic" in data:
+            try:
+                layer1 = Layer1Features.model_validate(data)
+            except Exception:
+                pass
+
+        code = to_strudel(
+            layer2, layer1=layer1,
+            bpm_override=args.bpm, key_override=args.key,
+            include_drums=include_drums,
+        )
+    else:
+        file_path = args.file
+        if not file_path.exists():
+            print(f"Error: file not found: {file_path}", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"Analyzing (Layer 1+2): {file_path}", file=sys.stderr)
+        start = time.time()
+        layer1 = analyze_layer1(file_path)
+        layer2 = analyze_layer2(file_path, layer1=layer1)
+        elapsed = time.time() - start
+        print(f"Analysis complete in {elapsed:.1f}s", file=sys.stderr)
+
+        code = to_strudel(
+            layer2, layer1=layer1,
+            bpm_override=args.bpm, key_override=args.key,
+            include_drums=include_drums,
+        )
+
+    if args.output:
+        args.output.write_text(code)
+        print(f"Written to {args.output}", file=sys.stderr)
+    else:
+        print(code)
 
 
 def _cmd_voice(args: argparse.Namespace) -> None:
