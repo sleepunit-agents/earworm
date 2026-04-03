@@ -12,6 +12,7 @@ from earworm.compose.composer import (
     _build_energy_curve,
     _build_synthetic_layer2,
     _default_section_pattern,
+    _is_groove,
     _parse_section_pattern,
 )
 from earworm.models import Layer2Features
@@ -333,3 +334,183 @@ def test_build_synthetic_layer2_structure():
     # All phrase boundaries should be within [0, duration)
     for pb in layer2.phrase.phrase_boundaries:
         assert 0.0 <= pb < 16.0
+
+
+# ─── groove mode tests ──────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def groove_layer2() -> Layer2Features:
+    """Layer2Features matching the Born Under Punches degenerate case.
+
+    Single label, high repetition, regular phrasing — triggers groove mode.
+    """
+    return Layer2Features.model_validate(
+        {
+            "file_path": "/test/groove.wav",
+            "duration_seconds": 60.0,
+            "segmentation": {
+                "boundaries": [0.0, 6.0, 12.0, 18.0, 24.0, 30.0, 36.0, 42.0, 48.0, 54.0],
+                "labels": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                "n_sections": 10,
+                "section_durations": [6.0] * 10,
+            },
+            "recurrence": {
+                "n_distinct_labels": 1,
+                "repetition_ratio": 1.0,
+                "label_sequence": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                "label_durations": {"0": 60.0},
+                "novelty_curve": [0.2] * 10,
+                "novelty_timestamps": [float(i * 6) for i in range(10)],
+            },
+            "energy_arc": {
+                "energy_curve": [0.2, 0.3, 0.5, 0.6, 0.7, 0.85, 0.9, 0.95, 0.8, 0.5],
+                "energy_timestamps": [float(i * 6) for i in range(10)],
+                "climax_time": 42.0,
+                "climax_position": 0.7,
+                "n_builds": 15,
+                "n_drops": 0,
+                "build_times": [6.0, 12.0],
+                "drop_times": [],
+                "dynamic_spread": 0.75,
+            },
+            "phrase": {
+                "phrase_boundaries": [float(i * 4) for i in range(15)],
+                "phrase_lengths_beats": [8.0] * 14,
+                "n_phrases": 14,
+                "typical_phrase_beats": 8.0,
+                "regularity": 0.975,
+                "irregular_phrases": [],
+            },
+        }
+    )
+
+
+def test_is_groove_detects_monolithic_track(groove_layer2):
+    """_is_groove returns True for single-label, high-repetition, regular tracks."""
+    assert _is_groove(groove_layer2) is True
+
+
+def test_is_groove_rejects_varied_track(layer2_fixture):
+    """_is_groove returns False for tracks with 3+ distinct labels."""
+    assert _is_groove(layer2_fixture) is False
+
+
+def test_is_groove_requires_high_repetition():
+    """Low repetition_ratio blocks groove detection even with 1 label."""
+    layer2 = Layer2Features.model_validate(
+        {
+            "file_path": "/test/low_rep.wav",
+            "duration_seconds": 30.0,
+            "segmentation": {
+                "boundaries": [0.0, 15.0],
+                "labels": [0, 0],
+                "n_sections": 2,
+                "section_durations": [15.0, 15.0],
+            },
+            "recurrence": {
+                "n_distinct_labels": 1,
+                "repetition_ratio": 0.5,
+                "label_sequence": [0, 0],
+                "label_durations": {"0": 30.0},
+                "novelty_curve": [0.2, 0.2],
+                "novelty_timestamps": [0.0, 15.0],
+            },
+            "energy_arc": {
+                "energy_curve": [0.5, 0.5],
+                "energy_timestamps": [0.0, 15.0],
+                "climax_time": 0.0,
+                "climax_position": 0.0,
+                "n_builds": 0,
+                "n_drops": 0,
+                "build_times": [],
+                "drop_times": [],
+                "dynamic_spread": 0.0,
+            },
+            "phrase": {
+                "phrase_boundaries": [0.0, 15.0],
+                "phrase_lengths_beats": [30.0],
+                "n_phrases": 1,
+                "typical_phrase_beats": 30.0,
+                "regularity": 0.95,
+                "irregular_phrases": [],
+            },
+        }
+    )
+    assert _is_groove(layer2) is False
+
+
+def test_groove_mode_produces_wav(groove_layer2, tmp_path):
+    """Groove mode writes a valid stereo WAV file."""
+    output = tmp_path / "groove.wav"
+    compose(
+        groove_layer2,
+        output,
+        bpm_override=120.0,
+        key_override="C minor",
+        duration_override=10.0,
+    )
+
+    assert output.exists()
+    rate, data = scipy.io.wavfile.read(str(output))
+    assert rate == 44100
+    assert data.ndim == 2
+    assert data.shape[1] == 2
+
+
+def test_groove_mode_manifest_indicates_groove(groove_layer2, tmp_path):
+    """Manifest has groove_mode=True when groove detection triggers."""
+    output = tmp_path / "groove.wav"
+    manifest = compose(
+        groove_layer2,
+        output,
+        bpm_override=120.0,
+        key_override="C minor",
+        duration_override=10.0,
+    )
+
+    assert manifest.groove_mode is True
+
+
+def test_groove_mode_has_two_chords(groove_layer2, tmp_path):
+    """Groove mode chord map has exactly two entries (tonic + subdominant)."""
+    output = tmp_path / "groove.wav"
+    manifest = compose(
+        groove_layer2,
+        output,
+        bpm_override=120.0,
+        key_override="C minor",
+        duration_override=10.0,
+    )
+
+    assert len(manifest.chord_map) == 2
+
+
+def test_normal_mode_not_groove(layer2_fixture, tmp_path):
+    """Standard varied tracks do not trigger groove mode."""
+    output = tmp_path / "normal.wav"
+    manifest = compose(
+        layer2_fixture,
+        output,
+        bpm_override=120.0,
+        key_override="C minor",
+        duration_override=10.0,
+    )
+
+    assert manifest.groove_mode is False
+
+
+def test_groove_mode_major_key(groove_layer2, tmp_path):
+    """Groove mode works with major keys."""
+    output = tmp_path / "groove_major.wav"
+    manifest = compose(
+        groove_layer2,
+        output,
+        bpm_override=120.0,
+        key_override="G major",
+        duration_override=10.0,
+    )
+
+    assert manifest.groove_mode is True
+    assert manifest.mode == "major"
+    assert output.exists()
