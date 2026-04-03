@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 from earworm.pipeline import analyze_layer1, analyze_layer2, analyze_layer3
-from earworm.compose import compose, ComposeManifest
+from earworm.compose import compose, compose_generative
 from earworm.compose.composer import compose_from_json
 
 
@@ -108,14 +108,33 @@ def main() -> None:
         "compose", help="Generate a structural response composition from analysis"
     )
     compose_parser.add_argument(
-        "file", type=Path, help="Audio file to analyze and compose from"
+        "file", type=Path, nargs="?",
+        help="Audio file to analyze and compose from (omit with --generative)"
     )
     compose_parser.add_argument(
-        "-o", "--output", type=Path, help="Output WAV file (default: <file>_response.wav)"
+        "-o", "--output", type=Path, help="Output WAV file (default: <file>_response.wav or output.wav)"
     )
     compose_parser.add_argument(
         "--from-json", type=Path, dest="from_json",
         help="Skip analysis — use existing JSON analysis file"
+    )
+    compose_parser.add_argument(
+        "--generative", action="store_true",
+        help="Pure generative mode — no source audio required"
+    )
+    compose_parser.add_argument(
+        "--sections", type=int, dest="sections", default=8,
+        help="Number of sections in generative mode (default: 8)"
+    )
+    compose_parser.add_argument(
+        "--pattern", dest="pattern", default="",
+        help="Section letter pattern for generative mode, e.g. AABABCABC"
+    )
+    compose_parser.add_argument(
+        "--energy",
+        choices=["arc", "peak-drop", "flat", "pulse"],
+        default="arc",
+        help="Energy arc preset for generative mode (default: arc)"
     )
     compose_parser.add_argument(
         "--style",
@@ -124,16 +143,58 @@ def main() -> None:
         help="Instrument palette (default: edm)",
     )
     compose_parser.add_argument(
-        "--bpm", type=float, help="Override BPM"
+        "--bpm", type=float, help="BPM (generative default: 120)"
     )
     compose_parser.add_argument(
-        "--key", help="Override root key (e.g. 'C minor', 'F# major')"
+        "--key", help="Key signature (e.g. 'C minor', 'F# major')"
     )
     compose_parser.add_argument(
         "--duration", type=float, dest="duration",
-        help="Override composition length in seconds (default: match source)"
+        help="Composition length in seconds (generative default: 180)"
     )
     compose_parser.add_argument(
+        "--json", action="store_true", help="Output manifest JSON to stdout"
+    )
+
+    # generate — alias for compose --generative
+    generate_parser = subparsers.add_parser(
+        "generate", help="Alias for 'compose --generative' — original composition without source audio"
+    )
+    generate_parser.add_argument(
+        "-o", "--output", type=Path, default=Path("output.wav"),
+        help="Output WAV file (default: output.wav)"
+    )
+    generate_parser.add_argument(
+        "--sections", type=int, dest="sections", default=8,
+        help="Number of sections (default: 8)"
+    )
+    generate_parser.add_argument(
+        "--pattern", dest="pattern", default="",
+        help="Section letter pattern, e.g. AABABCABC"
+    )
+    generate_parser.add_argument(
+        "--energy",
+        choices=["arc", "peak-drop", "flat", "pulse"],
+        default="arc",
+        help="Energy arc preset (default: arc)"
+    )
+    generate_parser.add_argument(
+        "--style",
+        choices=["edm"],
+        default="edm",
+        help="Instrument palette (default: edm)",
+    )
+    generate_parser.add_argument(
+        "--bpm", type=float, default=120.0, help="BPM (default: 120)"
+    )
+    generate_parser.add_argument(
+        "--key", default="A minor", help="Key signature (default: 'A minor')"
+    )
+    generate_parser.add_argument(
+        "--duration", type=float, dest="duration", default=180.0,
+        help="Composition length in seconds (default: 180)"
+    )
+    generate_parser.add_argument(
         "--json", action="store_true", help="Output manifest JSON to stdout"
     )
 
@@ -249,7 +310,7 @@ def main() -> None:
         _cmd_voice(args)
     elif args.command == "bridge":
         _cmd_bridge(args)
-    elif args.command == "compose":
+    elif args.command in ("compose", "generate"):
         _cmd_compose(args)
     elif args.command == "calibrate":
         _cmd_calibrate(args)
@@ -466,14 +527,38 @@ def _format_human_l3(result) -> str:
 def _cmd_compose(args: argparse.Namespace) -> None:
     import json as _json
 
-    file_path = args.file
+    # Detect generative mode: either --generative flag, or `generate` alias, or no file given
+    is_generative = (
+        getattr(args, "generative", False)
+        or args.command == "generate"
+        or getattr(args, "file", None) is None
+    )
 
-    # Determine output path
-    output = args.output
-    if output is None:
-        output = file_path.parent / (file_path.stem + "_response.wav")
+    if is_generative:
+        output = args.output or Path("output.wav")
+        bpm = args.bpm or 120.0
+        key = args.key or "A minor"
+        duration = args.duration or 180.0
+        n_sections = getattr(args, "sections", 8)
+        pattern = getattr(args, "pattern", "")
+        energy = getattr(args, "energy", "arc")
 
-    if args.from_json:
+        print(f"Generating (generative mode): BPM={bpm:.0f} Key={key} Energy={energy}", file=sys.stderr)
+        print(f"Sections={n_sections}{f' pattern={pattern}' if pattern else ''}  Duration={duration:.0f}s", file=sys.stderr)
+        print(f"Output: {output}", file=sys.stderr)
+
+        manifest = compose_generative(
+            output=output,
+            bpm=bpm,
+            key=key,
+            n_sections=n_sections,
+            section_pattern=pattern,
+            energy_preset=energy,
+            duration_seconds=duration,
+            style=args.style,
+        )
+    elif args.from_json:
+        output = args.output or Path("output.wav")
         # Use existing analysis JSON
         if not args.from_json.exists():
             print(f"Error: analysis file not found: {args.from_json}", file=sys.stderr)
@@ -489,6 +574,16 @@ def _cmd_compose(args: argparse.Namespace) -> None:
             duration_override=args.duration,
         )
     else:
+        file_path = args.file
+        if file_path is None:
+            print("Error: provide a file argument or use --generative", file=sys.stderr)
+            sys.exit(1)
+
+        # Determine output path
+        output = args.output
+        if output is None:
+            output = file_path.parent / (file_path.stem + "_response.wav")
+
         # Run full analysis first
         if not file_path.exists():
             print(f"Error: file not found: {file_path}", file=sys.stderr)
