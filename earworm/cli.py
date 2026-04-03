@@ -298,6 +298,33 @@ def main() -> None:
         "--corpus-dir", type=Path, help="Corpus directory (default: ./calibration)"
     )
 
+    # verify command — sample metadata verification
+    verify_parser = subparsers.add_parser(
+        "verify", help="Verify a sample matches its labeled category"
+    )
+    verify_parser.add_argument(
+        "file", type=Path, help="Path to audio sample"
+    )
+    verify_parser.add_argument(
+        "--category", "-c",
+        help="Expected category (e.g. kick, snare, hihat, bass, pad, melody). "
+        "If omitted, scores against all categories and suggests best match.",
+    )
+    verify_parser.add_argument(
+        "--json", action="store_true", help="Output raw JSON"
+    )
+    verify_parser.add_argument(
+        "-o", "--output", type=Path, help="Write output to file"
+    )
+    verify_parser.add_argument(
+        "--no-suggest", action="store_true",
+        help="Skip best-fit suggestion on mismatch"
+    )
+    verify_parser.add_argument(
+        "--list-categories", action="store_true",
+        help="List all known categories and exit"
+    )
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -312,6 +339,8 @@ def main() -> None:
         _cmd_bridge(args)
     elif args.command in ("compose", "generate"):
         _cmd_compose(args)
+    elif args.command == "verify":
+        _cmd_verify(args)
     elif args.command == "calibrate":
         _cmd_calibrate(args)
 
@@ -519,6 +548,116 @@ def _format_human_l3(result) -> str:
     lines.append(f"    Melodic range:  {comp.melodic_range_semitones:.1f} semitones")
     lines.append(f"    Struct variety: {comp.structural_variety:.0%}")
     lines.append("")
+
+    lines.append(f"{'=' * 60}")
+    return "\n".join(lines)
+
+
+def _cmd_verify(args: argparse.Namespace) -> None:
+    from earworm.verify import verify, verify_all_categories
+    from earworm.verify.profiles import known_categories
+
+    # --list-categories: just print and exit
+    if getattr(args, "list_categories", False):
+        print("Known categories:")
+        for cat in known_categories():
+            print(f"  {cat}")
+        return
+
+    path = args.file
+    if not path.exists():
+        print(f"Error: file not found: {path}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Analyzing: {path}", file=sys.stderr)
+    start = time.time()
+    features = analyze_layer1(path)
+    elapsed = time.time() - start
+    print(f"L1 extraction done in {elapsed:.1f}s", file=sys.stderr)
+
+    if args.category:
+        result = verify(features, args.category, suggest=not args.no_suggest)
+
+        if args.json:
+            output = result.model_dump_json(indent=2)
+        else:
+            output = _format_verify_result(result)
+    else:
+        # No category — score against all and show ranking
+        scores = verify_all_categories(features)
+
+        if args.json:
+            import json
+            output = json.dumps(
+                [s.model_dump() for s in scores], indent=2
+            )
+        else:
+            output = _format_category_ranking(features.file_path, scores)
+
+    if args.output:
+        args.output.write_text(output)
+        print(f"Written to {args.output}", file=sys.stderr)
+    else:
+        print(output)
+
+
+def _format_verify_result(result) -> str:
+    """Format a VerifyResult for human reading."""
+    lines = []
+    lines.append(f"{'=' * 60}")
+    lines.append("  Sample Verification")
+    lines.append(f"{'=' * 60}")
+    lines.append(f"  File:     {result.file_path}")
+    lines.append(f"  Label:    {result.labeled_category} -> {result.canonical_category}")
+    lines.append(f"  Score:    {result.score:.2f}")
+
+    verdict_icon = {"match": "PASS", "mismatch": "FAIL", "uncertain": "WARN"}.get(
+        result.verdict, "????"
+    )
+    lines.append(f"  Verdict:  [{verdict_icon}] {result.verdict}")
+    lines.append("")
+
+    lines.append("  Checks:")
+    for check in result.checks:
+        icon = "+" if check.passed else "-"
+        lines.append(f"    [{icon}] {check.name} (w={check.weight:.1f})")
+        lines.append(f"        {check.detail}")
+    lines.append("")
+
+    lines.append(f"  {result.summary}")
+
+    if result.suggestion and result.suggestion.score >= 0.5:
+        lines.append("")
+        lines.append(f"  Suggestion: this may be a {result.suggestion.category}"
+                      f" (score: {result.suggestion.score:.2f},"
+                      f" {result.suggestion.checks_passed}/{result.suggestion.checks_total} checks)")
+
+    lines.append(f"{'=' * 60}")
+    return "\n".join(lines)
+
+
+def _format_category_ranking(file_path: str, scores) -> str:
+    """Format category ranking for human reading."""
+    lines = []
+    lines.append(f"{'=' * 60}")
+    lines.append("  Sample Category Identification")
+    lines.append(f"{'=' * 60}")
+    lines.append(f"  File: {file_path}")
+    lines.append("")
+    lines.append("  Category Rankings:")
+
+    for i, s in enumerate(scores):
+        bar_len = int(s.score * 30)
+        bar = "#" * bar_len + "." * (30 - bar_len)
+        marker = " <--" if i == 0 else ""
+        lines.append(
+            f"    {s.category:>10s}  [{bar}] {s.score:.2f}"
+            f"  ({s.checks_passed}/{s.checks_total}){marker}"
+        )
+
+    if scores:
+        lines.append("")
+        lines.append(f"  Best match: {scores[0].category} (score: {scores[0].score:.2f})")
 
     lines.append(f"{'=' * 60}")
     return "\n".join(lines)
