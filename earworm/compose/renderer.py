@@ -16,6 +16,11 @@ from pytheory.live import SAMPLE_RATE, _SYNTH_FUNCTIONS
 from pytheory.play import Synth
 from pytheory.rhythm import Score
 
+# Attack/release envelope constants — applied per note to eliminate click artifacts
+# that occur when raw oscillator samples are abruptly switched on/off.
+_ATTACK_SAMPLES = int(0.020 * SAMPLE_RATE)   # 20 ms linear ramp-in
+_RELEASE_SAMPLES = int(0.050 * SAMPLE_RATE)  # 50 ms linear ramp-out
+
 
 def render_wav(score: Score, output: Path) -> None:
     """Render a pytheory Score to a WAV file at *output*.
@@ -44,7 +49,7 @@ def render_wav(score: Score, output: Path) -> None:
             if note.tone is not None and hasattr(note.tone, "pitch"):
                 # Single tone
                 hz = note.tone.pitch()
-                samples = synth_fn(hz, n_samples=dur_samples).astype(np.float64)
+                samples = _apply_envelope(synth_fn(hz, n_samples=dur_samples).astype(np.float64))
                 _mix_into(buf, samples, pos_samples, volume)
             elif note.tone is not None and hasattr(note.tone, "tones"):
                 # Chord — render each tone and mix at reduced volume
@@ -52,7 +57,7 @@ def render_wav(score: Score, output: Path) -> None:
                 for tone in note.tone.tones:
                     if hasattr(tone, "pitch"):
                         hz = tone.pitch()
-                        samples = synth_fn(hz, n_samples=dur_samples).astype(np.float64)
+                        samples = _apply_envelope(synth_fn(hz, n_samples=dur_samples).astype(np.float64))
                         _mix_into(buf, samples, pos_samples, chord_vol)
 
             pos_beats += note.beats
@@ -67,6 +72,24 @@ def render_wav(score: Score, output: Path) -> None:
     # Write stereo (duplicate mono channel)
     stereo = np.column_stack([audio, audio])
     scipy.io.wavfile.write(str(output), SAMPLE_RATE, stereo)
+
+
+def _apply_envelope(samples: np.ndarray) -> np.ndarray:
+    """Apply a linear attack/release fade to eliminate click artifacts.
+
+    The first _ATTACK_SAMPLES frames ramp from 0 → 1; the last
+    _RELEASE_SAMPLES frames ramp from 1 → 0.  Each ramp is capped at n//4
+    so very short notes still get a proportional fade without overlap.
+    """
+    n = len(samples)
+    env = np.ones(n, dtype=np.float64)
+    att = min(_ATTACK_SAMPLES, n // 4)
+    rel = min(_RELEASE_SAMPLES, n // 4)
+    if att > 0:
+        env[:att] = np.linspace(0.0, 1.0, att)
+    if rel > 0:
+        env[n - rel:] = np.linspace(1.0, 0.0, rel)
+    return samples * env
 
 
 def _mix_into(buf: np.ndarray, samples: np.ndarray, offset: int, volume: float) -> None:
