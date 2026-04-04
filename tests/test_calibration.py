@@ -166,9 +166,9 @@ class TestSeeds:
     def test_seed_xpander(self, tmp_path):
         corpus = Corpus(corpus_dir=tmp_path / "cal")
         seed_corpus(corpus)
-        xp = corpus.get_track("deadmau5-xpander")
+        xp = corpus.get_track("sasha-xpander")
         assert xp is not None
-        assert xp.artist == "Deadmau5"
+        assert xp.artist == "Sasha"
         assert len(xp.human_descriptions) >= 2
 
     def test_seed_descriptions_have_tags(self, tmp_path):
