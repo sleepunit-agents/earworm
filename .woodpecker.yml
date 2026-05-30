@@ -7,7 +7,7 @@ steps:
   - name: install
     image: python:3.12-bookworm
     commands:
-      - apt-get update && apt-get install -y --no-install-recommends libsndfile1
+      - apt-get update && apt-get install -y --no-install-recommends libsndfile1 libportaudio2
       - pip install -e ".[dev]"
 
   - name: lint
@@ -21,7 +21,7 @@ steps:
   - name: test
     image: python:3.12-bookworm
     commands:
-      - apt-get update && apt-get install -y --no-install-recommends libsndfile1
+      - apt-get update && apt-get install -y --no-install-recommends libsndfile1 libportaudio2
       - pip install -e ".[dev]"
       - pytest tests/ -v
     depends_on: [install]
