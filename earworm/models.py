@@ -242,3 +242,37 @@ class VoiceResult(BaseModel):
     concerns: list[str]  # Weaknesses or issues (can be empty)
     section_notes: str | None = None  # Deep mode only: section-by-section walkthrough
     related_samples: list[SampleReference] | None = None  # Samples matching this track's perception
+
+
+# --- Sample Verification ---
+
+
+class CheckResult(BaseModel):
+    """Result of a single profile check against a sample."""
+
+    name: str  # Check name (e.g. "low_frequency_content")
+    passed: bool
+    weight: float  # Importance of this check (0-1)
+    detail: str  # Human-readable explanation
+
+
+class CategoryScore(BaseModel):
+    """Score for a single category when suggesting best-fit."""
+
+    category: str
+    score: float  # Weighted score (0-1)
+    checks_passed: int
+    checks_total: int
+
+
+class VerifyResult(BaseModel):
+    """Result of verifying a sample against its labeled category."""
+
+    file_path: str
+    labeled_category: str  # What the sample claims to be
+    canonical_category: str  # Normalized category name
+    score: float  # Weighted verification score (0-1)
+    verdict: str  # "match", "mismatch", or "uncertain"
+    checks: list[CheckResult]  # Per-check details
+    summary: str  # Human-readable summary
+    suggestion: CategoryScore | None = None  # Best-fit category if mismatch
