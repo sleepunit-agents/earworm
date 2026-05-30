@@ -50,8 +50,10 @@ def extract_loudness(y: np.ndarray, sr: int, y_stereo: np.ndarray | None = None)
         except ValueError:
             st_loudness.append(-70.0)
 
-    lufs_short_term_max = max(st_loudness) if st_loudness else lufs_integrated
-    lufs_range = (max(st_loudness) - min(st_loudness)) if st_loudness else 0.0
+    # Filter out -inf returns from pyloudnorm (silent windows) before computing range
+    finite_loudness = [v for v in st_loudness if np.isfinite(v)]
+    lufs_short_term_max = max(finite_loudness) if finite_loudness else lufs_integrated
+    lufs_range = (max(finite_loudness) - min(finite_loudness)) if finite_loudness else 0.0
 
     # Peak and RMS
     peak_linear = float(np.max(np.abs(y)))

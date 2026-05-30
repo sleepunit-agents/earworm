@@ -49,6 +49,22 @@ class ComposeManifest(BaseModel):
     n_phrases: int
     duration_seconds: float
     style: str
+    groove_mode: bool = False
+
+
+def _is_groove(layer2: Layer2Features) -> bool:
+    """Detect monolithic/groove tracks that need an alternate composition strategy.
+
+    A groove track has very few distinct section types (≤ 2), high repetition,
+    and regular phrasing. The standard chord-per-section approach degenerates to
+    a single sustained chord for these tracks. Groove mode uses rhythm-driven
+    composition with layered textural entry instead.
+    """
+    return (
+        layer2.recurrence.n_distinct_labels <= 2
+        and layer2.recurrence.repetition_ratio >= 0.85
+        and layer2.phrase.regularity >= 0.85
+    )
 
 
 def compose(
@@ -86,6 +102,14 @@ def compose(
         key_str = "A minor"
 
     root, mode = _parse_key(key_str)
+    total_dur = duration_override or layer2.duration_seconds
+
+    # --- Groove mode detection ---
+    if _is_groove(layer2):
+        return _compose_groove(
+            layer2, output, bpm, root, mode, total_dur, style,
+        )
+
     key = Key(root, mode)
 
     # --- 2. Build chord map: label → chord degree ---
@@ -112,7 +136,6 @@ def compose(
         phrase_bounds = [0.0, layer2.duration_seconds]
 
     # Normalize: ensure we start at 0 and end at total_dur
-    total_dur = duration_override or layer2.duration_seconds
     if phrase_bounds[0] > 0.1:
         phrase_bounds = [0.0] + phrase_bounds
     # Truncate to total_dur and append it as the final boundary
@@ -207,6 +230,117 @@ def compose_from_json(
             pass
 
     return compose(layer2, output, layer1=layer1, **kwargs)
+
+
+def _compose_groove(
+    layer2: Layer2Features,
+    output: Path,
+    bpm: float,
+    root: str,
+    mode: str,
+    total_dur: float,
+    style: str,
+) -> ComposeManifest:
+    """Groove mode composition for monolithic/repetitive tracks.
+
+    Instead of mapping one chord per section (which degenerates to a single
+    sustained chord when n_distinct_labels ≤ 2), groove mode uses:
+    - Two-chord alternation (tonic ↔ subdominant) cycling every phrase
+    - Short 1-beat bass notes instead of phrase-length sustains
+    - Layered textural entry driven by the energy arc:
+      bass alone → pad enters at energy > 0.4 → lead at energy > 0.8
+    """
+    key = Key(root, mode)
+
+    # Two-chord alternation: i ↔ iv (minor) or I ↔ IV (major)
+    degree_a = 0  # tonic
+    degree_b = 3  # subdominant
+    chord_a = key.triad(degree_a)
+    chord_b = key.triad(degree_b)
+
+    chord_name_map = {
+        0: str(chord_a),
+        1: str(chord_b),
+    }
+
+    # Energy lookup
+    energy_curve = np.array(layer2.energy_arc.energy_curve)
+    energy_times = np.array(layer2.energy_arc.energy_timestamps)
+
+    def energy_at(t: float) -> float:
+        if len(energy_curve) == 0:
+            return 0.5
+        idx = int(np.searchsorted(energy_times, t, side="right")) - 1
+        idx = max(0, min(idx, len(energy_curve) - 1))
+        return float(energy_curve[idx])
+
+    # Phrase boundaries
+    phrase_bounds = list(layer2.phrase.phrase_boundaries)
+    if not phrase_bounds:
+        phrase_bounds = list(layer2.segmentation.boundaries)
+    if not phrase_bounds:
+        phrase_bounds = [0.0, total_dur]
+
+    if phrase_bounds[0] > 0.1:
+        phrase_bounds = [0.0] + phrase_bounds
+    phrase_bounds = [t for t in phrase_bounds if t < total_dur]
+    phrase_bounds.append(total_dur)
+
+    # Build Score with three parts for layered entry
+    score = Score(bpm=int(bpm))
+    bass_part = score.part("bass", synth=Synth.SAW, volume=0.45)
+    pad_part = score.part("pad", synth=Synth.SUPERSAW, volume=0.30)
+    lead_part = score.part("lead", synth=Synth.SQUARE, volume=0.20)
+
+    beats_per_sec = bpm / 60.0
+
+    for i, t_start in enumerate(phrase_bounds[:-1]):
+        t_end = phrase_bounds[i + 1]
+        phrase_dur_secs = t_end - t_start
+        phrase_dur_beats = max(0.25, phrase_dur_secs * beats_per_sec)
+        energy = energy_at(t_start)
+        vel = max(50, min(127, int(50 + energy * 77)))
+
+        # Alternate chords every phrase
+        chord = chord_a if i % 2 == 0 else chord_b
+        bass_root = _transpose_octaves(chord.tones[0], -2)
+
+        # --- Bass: always present, 1-beat short notes ---
+        n_bass_notes = max(1, int(phrase_dur_beats))
+        bass_note_beats = phrase_dur_beats / n_bass_notes
+        for j in range(n_bass_notes):
+            bass_part.add(bass_root, bass_note_beats, velocity=min(vel, 90))
+
+        # --- Pad: enters when energy > 0.4 ---
+        if energy > 0.4:
+            pad_part.add(chord, phrase_dur_beats, velocity=vel)
+        else:
+            pad_part.add(None, phrase_dur_beats)  # rest
+
+        # --- Lead: enters when energy > 0.8, plays chord fifth an octave up ---
+        if energy > 0.8 and len(chord.tones) >= 2:
+            lead_tone = _transpose_octaves(chord.tones[2 if len(chord.tones) > 2 else 1], 1)
+            lead_part.add(lead_tone, phrase_dur_beats, velocity=max(40, vel - 20))
+        else:
+            lead_part.add(None, phrase_dur_beats)  # rest
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    render_wav(score, output)
+
+    return ComposeManifest(
+        source_file=layer2.file_path,
+        output_file=str(output),
+        bpm=bpm,
+        key=root,
+        mode=mode,
+        n_sections=layer2.segmentation.n_sections,
+        label_sequence=layer2.recurrence.label_sequence,
+        chord_map=chord_name_map,
+        n_phrases=len(phrase_bounds) - 1,
+        duration_seconds=total_dur,
+        style=style,
+        groove_mode=True,
+    )
 
 
 EnergyPreset = Literal["arc", "peak-drop", "flat", "pulse"]
