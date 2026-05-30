@@ -6,5 +6,12 @@ pytheory. The composition responds to the source track's structural DNA
 """
 
 from earworm.compose.composer import ComposeManifest, compose, compose_generative
+from earworm.compose.strudel import to_strudel, to_strudel_generative
 
-__all__ = ["compose", "compose_generative", "ComposeManifest"]
+__all__ = [
+    "compose",
+    "compose_generative",
+    "ComposeManifest",
+    "to_strudel",
+    "to_strudel_generative",
+]
