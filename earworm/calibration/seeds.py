@@ -104,89 +104,94 @@ def _seed_born_under_punches(corpus: Corpus) -> None:
 
 
 def _seed_xpander(corpus: Corpus) -> None:
-    """Xpander — Deadmau5.
+    """Xpander — Sasha.
 
-    From 2007. A progressive/minimal techno piece that builds slowly over
-    9+ minutes. Hypnotic, repetitive, evolving. A benchmark for what the
-    pipeline should detect in long-form electronic builds.
+    From the Xpander EP (1999). The definitive progressive trance/UK techno track.
+    Layered architecture, four distinct section types, euphoric build. A benchmark
+    for what the pipeline should detect in progressive electronic structure.
     """
     entry = corpus.add_track(
-        artist="Deadmau5",
+        artist="Sasha",
         title="Xpander",
-        album="",
-        year=2007,
+        album="Xpander EP",
+        year=1999,
     )
 
     entry.human_descriptions = [
         HumanDescription(
             source="critical-consensus",
             text=(
-                "Xpander is a masterclass in minimal techno patience. A hypnotic "
-                "bassline establishes the foundation early, and the track spends its "
-                "entire 9+ minutes adding and subtracting elements over a four-on-the-floor "
-                "kick. The build is glacial but relentless — hi-hats open up, synth pads "
-                "swell, a melodic motif enters around the midpoint and gradually takes over. "
-                "The production is clean and spacious, with careful attention to frequency "
-                "separation. It's a track designed for sustained, focused listening — or "
-                "for losing yourself on a dancefloor at 3 AM."
+                "Xpander is Sasha's defining statement — a near seven-minute arc of "
+                "progressive trance architecture that transformed club culture in 1999. "
+                "A four-on-the-floor foundation anchors the track as distinct layers "
+                "enter and exit in four identifiable structural phases. The melody is "
+                "deceptively simple but emotionally devastating when the full arrangement "
+                "locks in around the midpoint. The production is dense but transparent — "
+                "low end is controlled, the mid-range carries emotional weight, and the "
+                "high-frequency shimmer gives the track its euphoric quality. Every layer "
+                "changes the meaning of all the others."
             ),
             tags=[
-                "techno", "minimal", "progressive", "electronic",
-                "hypnotic", "building", "clean", "spacious",
-                "four-on-the-floor", "dark",
+                "progressive trance", "uk techno", "electronic",
+                "euphoric", "building", "layered", "emotional",
+                "dark", "four-on-the-floor", "transcendent",
             ],
             key_observations=[
-                "9+ minute duration — long-form electronic structure",
-                "Glacial build — elements added/subtracted over full runtime",
-                "Four-on-the-floor kick drum is constant foundation",
-                "Clean, spacious production — good frequency separation",
-                "Melodic motif enters around midpoint",
-                "Hypnotic bassline is the anchor",
-                "Designed for sustained listening or dancefloor immersion",
+                "Four distinct structural phases — not just A/B, genuine evolution",
+                "Progressive architecture — each layer recontextualizes what came before",
+                "Melody enters mid-track and builds to euphoric peak",
+                "Dense but transparent production — all elements have space",
+                "Low end is controlled and punchy — not overwhelming",
+                "High-frequency shimmer creates euphoric quality",
+                "~6:46 duration — compact but complete arc",
             ],
         ),
         HumanDescription(
             source="electronic-community",
             text=(
-                "Peak deadmau5 before the pop crossover. This is what he does best — "
-                "slow, deliberate builds that reward patience. The kick never changes "
-                "but the world around it transforms completely over 9 minutes. The synth "
-                "work is subtle, the automation is smooth, and the climax is earned, not "
-                "forced. The low end is controlled and punchy without being overwhelming."
+                "This is what progressive trance is supposed to be. Sasha builds the "
+                "track in actual phases — the second half doesn't just repeat the first "
+                "half louder. Each new element earns its place and changes the texture of "
+                "everything underneath it. The kick drives relentlessly but the space "
+                "around it keeps shifting. The euphoria at the peak doesn't feel forced — "
+                "it's the logical conclusion of everything that came before. Sasha understood "
+                "that transcendence requires architecture."
             ),
             tags=[
-                "techno", "progressive", "minimal", "electronic",
-                "hypnotic", "patient", "punchy", "dark",
+                "trance", "progressive", "electronic", "uk techno",
+                "euphoric", "structured", "building", "emotional",
             ],
             key_observations=[
-                "Slow deliberate build that rewards patience",
-                "Kick drum constant while everything else transforms",
-                "Subtle synth work, smooth automation",
-                "Climax feels earned, not forced",
-                "Low end is controlled and punchy",
+                "Four identifiable section types (not just verse/chorus)",
+                "Progressive — second half genuinely different from first",
+                "Each new layer earns its place structurally",
+                "Euphoric peak feels earned, not arbitrary",
+                "Transcendence through architecture, not just volume",
             ],
         ),
         HumanDescription(
             source="production-analysis",
             text=(
-                "From a production standpoint, Xpander demonstrates disciplined frequency "
-                "management. The kick occupies the sub-bass cleanly, the bassline sits in "
-                "the low-mids without masking, and the upper frequency content is introduced "
-                "gradually — hi-hats first, then shimmering pads, then the lead synth. The "
-                "stereo field opens up as the track progresses — early sections are narrower, "
-                "and width increases with intensity. The mastering is moderate — not "
-                "brickwalled, retaining dynamics appropriate for the genre."
+                "The production on Xpander is a study in frequency discipline. The kick "
+                "and sub-bass are clearly separated, the main bassline occupies the "
+                "low-mids without masking, and the melodic content lives in the upper-mids "
+                "and highs. The stereo field expands gradually — tighter in the opening "
+                "sections, wide and immersive at the peak. The mastering is notably hot "
+                "for 1999 — some limiter activity is audible on heavy transients — but the "
+                "dynamic range is preserved well enough to serve the track's emotional arc. "
+                "The mix has a heavy low-end bias that suits the dancefloor context."
             ),
             tags=[
-                "techno", "electronic", "clean", "spacious",
-                "dynamic", "well-produced",
+                "trance", "electronic", "dense", "hot-mastered",
+                "low-heavy", "stereo-expanding",
             ],
             key_observations=[
-                "Disciplined frequency management — kick/bass/mids separated",
-                "Elements introduced gradually up the frequency spectrum",
-                "Stereo field widens as track intensity increases",
-                "Moderate mastering — not brickwalled, retains dynamics",
-                "Upper content layered: hi-hats → pads → lead synth",
+                "Kick and sub-bass clearly separated in frequency",
+                "Stereo field expands from narrow (intro) to wide (peak)",
+                "Hot mastering for the era — limiter artifacts on transients",
+                "Heavy low-end bias — spectral balance tilted toward bass",
+                "Dynamic range mostly preserved despite hot master",
+                "Mix density increases through four structural phases",
             ],
         ),
     ]

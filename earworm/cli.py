@@ -580,10 +580,11 @@ def _cmd_compose(args: argparse.Namespace) -> None:
     import json as _json
 
     # Detect generative mode: either --generative flag, or `generate` alias, or no file given
+    # Note: --from-json takes priority over the "no file" heuristic
     is_generative = (
         getattr(args, "generative", False)
         or args.command == "generate"
-        or getattr(args, "file", None) is None
+        or (getattr(args, "file", None) is None and not getattr(args, "from_json", None))
     )
 
     if is_generative:
