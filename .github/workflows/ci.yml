@@ -8,14 +8,10 @@ on:
 jobs:
   ci:
     runs-on: [self-hosted, wunder]
+    container: python:3.12-bookworm
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
 
       - name: Install system dependencies
         run: |
